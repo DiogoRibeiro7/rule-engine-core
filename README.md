@@ -23,6 +23,7 @@ extended toward a fully implemented sink delivery system.
 - The repo now includes neutral end-to-end examples across multiple domains.
 - A first-class sink contract now exists, with `stdout`, file, webhook, queue, and object-storage sinks implemented.
 - Declarative sink configs are validated at rule-load time and normalized onto canonical sink types.
+- Runtime sink dispatch now coerces validated sink dictionaries into explicit typed sink config objects.
 - Sink dispatch now supports bounded retries, configurable backoff, dead-letter recording, delivery metrics snapshots, and structured delivery logs.
 - Delivery observability now covers overall and per-sink counts, retry activity, unsupported routes, dead letters, and measured delivery latency.
 - Replay execution can now return a typed delivery report, and the CLI can emit alerts plus delivery telemetry as JSON.
@@ -64,6 +65,7 @@ What this repo is:
 - a formal declarative rule schema with fail-fast load-time validation
 - compile-time validation for trigger semantics, durations, cron syntax, and condition grammar edges
 - a delivery layer with retry, backoff, dead-letter, delivery-metrics, and structured-delivery-log primitives
+- explicit typed sink configuration objects behind the declarative YAML surface
 - a replay/report surface for downstream tooling and automation
 - a type-checked core package with CI enforcement
 

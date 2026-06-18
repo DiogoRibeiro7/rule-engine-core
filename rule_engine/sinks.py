@@ -3,11 +3,244 @@ from __future__ import annotations
 import json
 import socket
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Protocol
+from typing import Any, Dict, Iterable, List, Protocol, TypeAlias
 from urllib import error, request
+
+
+@dataclass(frozen=True)
+class RetryConfig:
+    max_attempts: int = 1
+    base_delay_s: float = 0.0
+    multiplier: float = 2.0
+    max_delay_s: float | None = None
+    sleep: bool = False
+
+    @classmethod
+    def from_dict(cls, value: Dict[str, Any] | None) -> "RetryConfig":
+        retry_config = value or {}
+        max_delay_value = retry_config.get("max_delay_s")
+        return cls(
+            max_attempts=max(1, int(retry_config.get("max_attempts", 1))),
+            base_delay_s=max(0.0, float(retry_config.get("base_delay_s", 0.0))),
+            multiplier=max(1.0, float(retry_config.get("multiplier", 2.0))),
+            max_delay_s=(
+                max(0.0, float(max_delay_value)) if max_delay_value is not None else None
+            ),
+            sleep=bool(retry_config.get("sleep", False)),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        data: Dict[str, Any] = {
+            "max_attempts": self.max_attempts,
+            "base_delay_s": self.base_delay_s,
+            "multiplier": self.multiplier,
+            "sleep": self.sleep,
+        }
+        if self.max_delay_s is not None:
+            data["max_delay_s"] = self.max_delay_s
+        return data
+
+
+class SinkConfig(Protocol):
+    type: str
+    retry: RetryConfig
+
+    def to_dict(self) -> Dict[str, Any]: ...
+
+
+@dataclass(frozen=True)
+class StdoutSinkConfig:
+    type: str = "stdout"
+    retry: RetryConfig = field(default_factory=RetryConfig)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"type": self.type, "retry": self.retry.to_dict()}
+
+
+@dataclass(frozen=True)
+class FileSinkConfig:
+    path: str
+    type: str = "file"
+    retry: RetryConfig = field(default_factory=RetryConfig)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"type": self.type, "path": self.path, "retry": self.retry.to_dict()}
+
+
+@dataclass(frozen=True)
+class WebhookSinkConfig:
+    url: str
+    timeout_s: float = 5.0
+    headers: Dict[str, str] = field(default_factory=dict)
+    method: str = "POST"
+    type: str = "webhook"
+    retry: RetryConfig = field(default_factory=RetryConfig)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "type": self.type,
+            "url": self.url,
+            "timeout_s": self.timeout_s,
+            "headers": dict(self.headers),
+            "method": self.method,
+            "retry": self.retry.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class QueueSinkConfig:
+    queue: str
+    retryable: bool = False
+    type: str = "queue"
+    retry: RetryConfig = field(default_factory=RetryConfig)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "type": self.type,
+            "queue": self.queue,
+            "retryable": self.retryable,
+            "retry": self.retry.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class ObjectStorageSinkConfig:
+    bucket: str
+    prefix: str = ""
+    extension: str = "jsonl"
+    retryable: bool = False
+    type: str = "object_storage"
+    retry: RetryConfig = field(default_factory=RetryConfig)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "type": self.type,
+            "bucket": self.bucket,
+            "prefix": self.prefix,
+            "extension": self.extension,
+            "retryable": self.retryable,
+            "retry": self.retry.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class GenericSinkConfig:
+    type: str
+    retry: RetryConfig = field(default_factory=RetryConfig)
+    extras: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "type": self.type,
+            **dict(self.extras),
+            "retry": self.retry.to_dict(),
+        }
+
+
+AnySinkConfig: TypeAlias = (
+    StdoutSinkConfig
+    | FileSinkConfig
+    | WebhookSinkConfig
+    | QueueSinkConfig
+    | ObjectStorageSinkConfig
+    | GenericSinkConfig
+)
+SinkConfigLike: TypeAlias = AnySinkConfig | Dict[str, Any]
+
+
+def parse_sink_config(config: Dict[str, Any]) -> AnySinkConfig:
+    sink_type = str(config.get("type", "")).strip()
+    retry = RetryConfig.from_dict(config.get("retry"))
+    if sink_type == "stdout":
+        return StdoutSinkConfig(retry=retry)
+    if sink_type == "file":
+        return FileSinkConfig(path=str(config.get("path", "")), retry=retry)
+    if sink_type == "webhook":
+        headers = config.get("headers") or {}
+        return WebhookSinkConfig(
+            url=str(config.get("url", "")),
+            timeout_s=float(config.get("timeout_s", 5.0)),
+            headers={str(key): str(value) for key, value in headers.items()},
+            method=str(config.get("method", "POST")).upper(),
+            retry=retry,
+        )
+    if sink_type == "queue":
+        return QueueSinkConfig(
+            queue=str(config.get("queue", "")),
+            retryable=bool(config.get("retryable", False)),
+            retry=retry,
+        )
+    if sink_type == "object_storage":
+        return ObjectStorageSinkConfig(
+            bucket=str(config.get("bucket", "")),
+            prefix=str(config.get("prefix", "")),
+            extension=str(config.get("extension", "jsonl")),
+            retryable=bool(config.get("retryable", False)),
+            retry=retry,
+        )
+    extras = {key: value for key, value in config.items() if key not in {"type", "retry"}}
+    return GenericSinkConfig(type=sink_type, retry=retry, extras=extras)
+
+
+def coerce_sink_config(config: SinkConfigLike) -> AnySinkConfig:
+    if isinstance(
+        config,
+        (
+            StdoutSinkConfig,
+            FileSinkConfig,
+            WebhookSinkConfig,
+            QueueSinkConfig,
+            ObjectStorageSinkConfig,
+            GenericSinkConfig,
+        ),
+    ):
+        return config
+    return parse_sink_config(config)
+
+
+def _require_config(config: SinkConfigLike, expected_type: type[Any]) -> AnySinkConfig:
+    parsed = coerce_sink_config(config)
+    if not isinstance(parsed, expected_type):
+        raise ValueError(f"Expected {expected_type.__name__}, got {parsed.type}")
+    assert isinstance(
+        parsed,
+        (
+            StdoutSinkConfig,
+            FileSinkConfig,
+            WebhookSinkConfig,
+            QueueSinkConfig,
+            ObjectStorageSinkConfig,
+            GenericSinkConfig,
+        ),
+    )
+    return parsed
+
+
+def _require_file_config(config: SinkConfigLike) -> FileSinkConfig:
+    parsed = _require_config(config, FileSinkConfig)
+    assert isinstance(parsed, FileSinkConfig)
+    return parsed
+
+
+def _require_webhook_config(config: SinkConfigLike) -> WebhookSinkConfig:
+    parsed = _require_config(config, WebhookSinkConfig)
+    assert isinstance(parsed, WebhookSinkConfig)
+    return parsed
+
+
+def _require_queue_config(config: SinkConfigLike) -> QueueSinkConfig:
+    parsed = _require_config(config, QueueSinkConfig)
+    assert isinstance(parsed, QueueSinkConfig)
+    return parsed
+
+
+def _require_object_storage_config(config: SinkConfigLike) -> ObjectStorageSinkConfig:
+    parsed = _require_config(config, ObjectStorageSinkConfig)
+    assert isinstance(parsed, ObjectStorageSinkConfig)
+    return parsed
 
 
 @dataclass(frozen=True)
@@ -19,7 +252,7 @@ class DeliveryRequest:
     message: str
     timestamp: datetime
     payload: Dict[str, Any]
-    config: Dict[str, Any]
+    config: SinkConfigLike
 
 
 @dataclass(frozen=True)
@@ -82,20 +315,15 @@ class RetryPolicy:
     sleep_enabled: bool = False
 
     @classmethod
-    def from_config(cls, config: Dict[str, Any]) -> "RetryPolicy":
-        retry_config = config.get("retry", {})
-        max_attempts = int(retry_config.get("max_attempts", 1))
-        base_delay_s = float(retry_config.get("base_delay_s", 0.0))
-        multiplier = float(retry_config.get("multiplier", 2.0))
-        max_delay_value = retry_config.get("max_delay_s")
-        max_delay_s = float(max_delay_value) if max_delay_value is not None else None
-        sleep_enabled = bool(retry_config.get("sleep", False))
+    def from_config(cls, config: SinkConfigLike) -> "RetryPolicy":
+        typed_config = coerce_sink_config(config)
+        retry_config = typed_config.retry
         return cls(
-            max_attempts=max(1, max_attempts),
-            base_delay_s=max(0.0, base_delay_s),
-            multiplier=max(1.0, multiplier),
-            max_delay_s=max_delay_s if max_delay_s is None else max(0.0, max_delay_s),
-            sleep_enabled=sleep_enabled,
+            max_attempts=retry_config.max_attempts,
+            base_delay_s=retry_config.base_delay_s,
+            multiplier=retry_config.multiplier,
+            max_delay_s=retry_config.max_delay_s,
+            sleep_enabled=retry_config.sleep,
         )
 
     def backoff_delay(self, attempt: int) -> float:
@@ -116,7 +344,7 @@ class DeadLetterRecord:
     message: str
     timestamp: datetime
     payload: Dict[str, Any]
-    config: Dict[str, Any]
+    config: SinkConfigLike
     result: DeliveryResult
 
 
@@ -137,6 +365,7 @@ class FileDeadLetterStore:
         self.path = Path(path)
 
     def record(self, record: DeadLetterRecord) -> None:
+        config = coerce_sink_config(record.config)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "sink_type": record.sink_type,
@@ -146,7 +375,7 @@ class FileDeadLetterStore:
             "message": record.message,
             "timestamp": record.timestamp.isoformat(),
             "payload": record.payload,
-            "config": record.config,
+            "config": config.to_dict(),
             "result": {
                 "status": record.result.status,
                 "detail": record.result.detail,
@@ -201,6 +430,7 @@ class SinkRegistry:
         self._delivery_log = []
 
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
+        request = replace(request, config=coerce_sink_config(request.config))
         self._increment_metrics(request.sink_type, total_requests=1)
         adapter = self.get(request.sink_type)
         if adapter is None:
@@ -367,14 +597,14 @@ class FileSink:
     sink_type = "file"
 
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
-        path_value = request.config.get("path")
-        if not path_value:
+        config = _require_file_config(request.config)
+        if not config.path:
             return DeliveryResult(
                 sink_type=self.sink_type,
                 status="failed",
                 detail="Missing required sink config field 'path'",
             )
-        path = Path(path_value)
+        path = Path(config.path)
         path.parent.mkdir(parents=True, exist_ok=True)
         record = {
             "entity_id": request.entity_id,
@@ -398,15 +628,15 @@ class WebhookSink:
     sink_type = "webhook"
 
     def deliver(self, req: DeliveryRequest) -> DeliveryResult:
-        url = req.config.get("url")
-        if not url:
+        config = _require_webhook_config(req.config)
+        if not config.url:
             return DeliveryResult(
                 sink_type=self.sink_type,
                 status="failed",
                 detail="Missing required sink config field 'url'",
             )
 
-        timeout_s = float(req.config.get("timeout_s", 5.0))
+        timeout_s = config.timeout_s
         payload = {
             "entity_id": req.entity_id,
             "rule_id": req.rule_id,
@@ -417,10 +647,10 @@ class WebhookSink:
         }
         body = json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json"}
-        headers.update(req.config.get("headers", {}))
-        method = str(req.config.get("method", "POST")).upper()
+        headers.update(config.headers)
+        method = config.method
         http_request = request.Request(
-            url=url,
+            url=config.url,
             data=body,
             headers=headers,
             method=method,
@@ -433,7 +663,7 @@ class WebhookSink:
                     sink_type=self.sink_type,
                     status="delivered",
                     detail="Delivered to webhook",
-                    metadata={"status_code": status_code, "url": url},
+                    metadata={"status_code": status_code, "url": config.url},
                 )
         except error.HTTPError as exc:
             retryable = exc.code >= 500
@@ -442,7 +672,7 @@ class WebhookSink:
                 status="failed",
                 detail=f"Webhook returned HTTP {exc.code}",
                 retryable=retryable,
-                metadata={"status_code": exc.code, "url": url},
+                metadata={"status_code": exc.code, "url": config.url},
             )
         except (error.URLError, TimeoutError, socket.timeout) as exc:
             return DeliveryResult(
@@ -450,7 +680,7 @@ class WebhookSink:
                 status="failed",
                 detail=f"Webhook delivery failed: {exc}",
                 retryable=True,
-                metadata={"url": url},
+                metadata={"url": config.url},
             )
 
 
@@ -477,8 +707,8 @@ class QueueSink:
         self.transport = transport or InMemoryQueueTransport()
 
     def deliver(self, req: DeliveryRequest) -> DeliveryResult:
-        queue_name = req.config.get("queue")
-        if not queue_name:
+        config = _require_queue_config(req.config)
+        if not config.queue:
             return DeliveryResult(
                 sink_type=self.sink_type,
                 status="failed",
@@ -494,13 +724,13 @@ class QueueSink:
             "payload": req.payload,
         }
         try:
-            transport_result = self.transport.send(queue_name, payload, req.config)
+            transport_result = self.transport.send(config.queue, payload, config.to_dict())
             return DeliveryResult(
                 sink_type=self.sink_type,
                 status="delivered",
                 detail="Delivered to queue",
                 metadata={
-                    "queue": queue_name,
+                    "queue": config.queue,
                     **transport_result,
                 },
             )
@@ -510,16 +740,15 @@ class QueueSink:
                 status="failed",
                 detail=f"Queue delivery timed out: {exc}",
                 retryable=True,
-                metadata={"queue": queue_name},
+                metadata={"queue": config.queue},
             )
         except Exception as exc:
-            retryable = bool(req.config.get("retryable", False))
             return DeliveryResult(
                 sink_type=self.sink_type,
                 status="failed",
                 detail=f"Queue delivery failed: {exc}",
-                retryable=retryable,
-                metadata={"queue": queue_name},
+                retryable=config.retryable,
+                metadata={"queue": config.queue},
             )
 
 
@@ -559,16 +788,16 @@ class ObjectStorageSink:
         self.transport = transport or FileObjectStorageTransport()
 
     def deliver(self, req: DeliveryRequest) -> DeliveryResult:
-        bucket = req.config.get("bucket")
-        if not bucket:
+        config = _require_object_storage_config(req.config)
+        if not config.bucket:
             return DeliveryResult(
                 sink_type=self.sink_type,
                 status="failed",
                 detail="Missing required sink config field 'bucket'",
             )
 
-        prefix = str(req.config.get("prefix", "")).strip("/")
-        extension = str(req.config.get("extension", "jsonl")).lstrip(".")
+        prefix = config.prefix.strip("/")
+        extension = config.extension.lstrip(".")
         timestamp_token = req.timestamp.strftime("%Y%m%dT%H%M%SZ")
         base_name = f"{req.rule_id}-{timestamp_token}.{extension}"
         key = f"{prefix}/{base_name}" if prefix else base_name
@@ -583,7 +812,7 @@ class ObjectStorageSink:
             }
         )
         try:
-            result = self.transport.put_object(bucket, key, body, req.config)
+            result = self.transport.put_object(config.bucket, key, body, config.to_dict())
             return DeliveryResult(
                 sink_type=self.sink_type,
                 status="delivered",
@@ -596,14 +825,13 @@ class ObjectStorageSink:
                 status="failed",
                 detail=f"Object storage delivery timed out: {exc}",
                 retryable=True,
-                metadata={"bucket": bucket, "key": key},
+                metadata={"bucket": config.bucket, "key": key},
             )
         except Exception as exc:
-            retryable = bool(req.config.get("retryable", False))
             return DeliveryResult(
                 sink_type=self.sink_type,
                 status="failed",
                 detail=f"Object storage delivery failed: {exc}",
-                retryable=retryable,
-                metadata={"bucket": bucket, "key": key},
+                retryable=config.retryable,
+                metadata={"bucket": config.bucket, "key": key},
             )

@@ -33,6 +33,7 @@ Build a small, trustworthy declarative rule engine that:
 - The repo now ships a small examples section with checked-in neutral-domain rules and event fixtures.
 - The repo now has explicit contribution notes and a top-level changelog.
 - Sink configs now validate against explicit grammar for the implemented sink types.
+- Sink dispatch now uses explicit typed sink config objects instead of opaque runtime dictionaries.
 - The delivery layer is executable, but production-grade backend breadth and policy depth are still incomplete.
 
 ## Phase 1: Stabilize The Core

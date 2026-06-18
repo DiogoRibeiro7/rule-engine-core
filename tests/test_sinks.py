@@ -18,10 +18,14 @@ from rule_engine.sinks import (
     InMemoryQueueTransport,
     ObjectStorageSink,
     QueueSink,
+    QueueSinkConfig,
     RetryPolicy,
     SinkRegistry,
     StdoutSink,
+    StdoutSinkConfig,
     WebhookSink,
+    WebhookSinkConfig,
+    parse_sink_config,
 )
 from rule_engine.types import SensorEvent
 
@@ -50,27 +54,87 @@ def test_sink_registry_reports_unsupported_sink():
 
 
 def test_retry_policy_defaults_to_single_attempt():
-    policy = RetryPolicy.from_config({})
+    policy = RetryPolicy.from_config(StdoutSinkConfig())
     assert policy.max_attempts == 1
     assert policy.base_delay_s == 0.0
 
 
 def test_retry_policy_parses_backoff_config():
     policy = RetryPolicy.from_config(
-        {
-            "retry": {
-                "max_attempts": 4,
-                "base_delay_s": 0.5,
-                "multiplier": 3,
-                "max_delay_s": 2,
-            }
-        }
+        StdoutSinkConfig(
+            retry=parse_sink_config(
+                {
+                    "type": "stdout",
+                    "retry": {
+                        "max_attempts": 4,
+                        "base_delay_s": 0.5,
+                        "multiplier": 3,
+                        "max_delay_s": 2,
+                    },
+                }
+            ).retry
+        )
     )
 
     assert policy.max_attempts == 4
     assert policy.backoff_delay(2) == 0.5
     assert policy.backoff_delay(3) == 1.5
     assert policy.backoff_delay(4) == 2.0
+
+
+def test_parse_sink_config_returns_typed_config():
+    config = parse_sink_config(
+        {
+            "type": "webhook",
+            "url": "https://example.test/hook",
+            "timeout_s": 2.5,
+            "headers": {"X-Test": "1"},
+            "method": "put",
+            "retry": {"max_attempts": 3},
+        }
+    )
+
+    assert isinstance(config, WebhookSinkConfig)
+    assert config.url == "https://example.test/hook"
+    assert config.timeout_s == 2.5
+    assert config.headers == {"X-Test": "1"}
+    assert config.method == "PUT"
+    assert config.retry.max_attempts == 3
+
+
+def test_sink_registry_coerces_raw_dict_config_before_adapter_dispatch():
+    class CapturingSink:
+        sink_type = "queue"
+
+        def __init__(self) -> None:
+            self.config = None
+
+        def deliver(self, request):
+            self.config = request.config
+            return DeliveryResult(
+                sink_type="queue",
+                status="delivered",
+                detail="ok",
+            )
+
+    sink = CapturingSink()
+    registry = SinkRegistry(adapters=[sink])
+    registry.deliver(
+        DeliveryRequest(
+            sink_type="queue",
+            rule_id="rule-1",
+            entity_id="entity-1",
+            severity="warning",
+            message="hello",
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            payload={},
+            config={"type": "queue", "queue": "alerts", "retryable": True},
+        )
+    )
+
+    assert isinstance(sink.config, QueueSinkConfig)
+    assert sink.config.queue == "alerts"
+    assert sink.config.retryable is True
 
 
 def test_sink_registry_retries_retryable_failures():
