@@ -1,0 +1,16 @@
+rule_id: fleet_heartbeat_gap
+description: Emit when a tracked asset stops reporting its heartbeat
+trigger:
+  type: absence
+  timeout: 15m
+sources:
+  - sensor_type: asset_heartbeat
+    entity_id: "*"
+condition:
+  operator: AND
+actions:
+  - severity: warning
+    message: "No fleet heartbeat for {{entity_id}} in {{duration}}"
+    sinks:
+      - type: file
+        path: output/fleet_alerts.ndjson

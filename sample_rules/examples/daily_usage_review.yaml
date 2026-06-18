@@ -1,0 +1,25 @@
+rule_id: daily_usage_review
+description: Emit a daily summary alert when recent usage volume is high
+trigger:
+  type: scheduled
+  cron: 0 8 * * *
+  lookback: 24h
+sources:
+  - sensor_type: usage_sample
+    entity_id: "*"
+aggregations:
+  - id: sample_count
+    function: count
+    field: value
+condition:
+  operator: AND
+  operands:
+    - metric: sample_count
+      operator: gte
+      value: 3
+actions:
+  - severity: info
+    message: "Daily usage review for {{entity_id}}: {{sample_count}} samples"
+    sinks:
+      - type: webhook
+        url: https://example.invalid/hooks/usage-review

@@ -1,0 +1,3 @@
+{"entity_id":"tenant-42","sensor_type":"usage_sample","value":10.0,"timestamp_ms":1704090600000}
+{"entity_id":"tenant-42","sensor_type":"usage_sample","value":11.0,"timestamp_ms":1704105000000}
+{"entity_id":"tenant-42","sensor_type":"usage_sample","value":9.0,"timestamp_ms":1704112200000}

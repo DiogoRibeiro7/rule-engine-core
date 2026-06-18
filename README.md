@@ -20,6 +20,7 @@ extended toward a fully implemented sink delivery system.
 - Replay evaluation supports `event`, `window`, `absence`, `composite`, and `scheduled` triggers.
 - Unit tests assert alert behavior, timer expiry, and lookback handling.
 - Fixture-driven golden tests now lock replay JSON output for the sample scenarios.
+- The repo now includes neutral end-to-end examples across multiple domains.
 - A first-class sink contract now exists, with `stdout`, file, webhook, queue, and object-storage sinks implemented.
 - Declarative sink configs are validated at rule-load time and normalized onto canonical sink types.
 - Sink dispatch now supports bounded retries, configurable backoff, dead-letter recording, delivery metrics snapshots, and structured delivery logs.
@@ -37,6 +38,7 @@ extended toward a fully implemented sink delivery system.
 - `tests/fixtures/replay/` — golden replay cases and expected JSON outputs for sample scenarios.
 - `sample_rules/` — sample declarative rules used as reference fixtures.
 - `sample_data/` — NDJSON fixtures for replay-based tests and demos.
+- `docs/examples.md` — small multi-domain examples that show how the same engine shape is reused.
 - `docs/architecture.svg` — public-facing architecture diagram for repo pages and social sharing.
 - `docs/rule-language.md` — exact supported declarative rule-language subset.
 - `docs/linkedin-project-kit.md` — reusable LinkedIn project copy, post text, and publishing checklist.
@@ -120,6 +122,12 @@ Replay a timer-driven rule and advance the engine past the final event:
 python -m rule_engine.runner sample_rules/dual_source_gap.yaml --events sample_data/dual_source_gap_events.ndjson --until 2023-11-15T12:26:40+00:00
 ```
 
+Replay one of the neutral example scenarios:
+
+```bash
+python -m rule_engine.runner sample_rules/examples/facility_temperature_spike.yaml --events sample_data/examples/facility_temperature_spike.ndjson
+```
+
 Emit replay alerts together with the delivery report as JSON:
 
 ```bash
@@ -169,6 +177,11 @@ The exact supported declarative subset is documented in
 - aggregation functions
 - sink configuration grammar
 - explicitly unsupported features
+
+## Examples
+
+Small neutral examples live in `docs/examples.md` and the matching checked-in
+fixtures under `sample_rules/examples/` and `sample_data/examples/`.
 
 ## Public Presentation
 
