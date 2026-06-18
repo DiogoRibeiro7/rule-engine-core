@@ -30,6 +30,7 @@ extended toward a fully implemented sink delivery system.
 - `rule_engine/` — generic Python reference implementation.
 - `rule_engine/compiler.py` — compile-time API for turning declarative rules into executable runtime objects.
 - `rule_engine/api.py` — lightweight embedding API for building and replaying engines from code.
+- `rule_engine/models.py` — public runtime models for alerts, metadata, evaluation results, and engine config.
 - `tests/` — unit tests for rule semantics and timing behavior.
 - `sample_rules/` — sample declarative rules used as reference fixtures.
 - `sample_data/` — NDJSON fixtures for replay-based tests and demos.
@@ -49,6 +50,7 @@ What this repo is:
 - an explicit engine-configuration surface for runtime startup and scheduling behavior
 - a lightweight embedding API for building engines from YAML, files, or precompiled rules
 - typed metadata and evaluation result objects for embedding and inspection
+- cleaner module boundaries between execution logic and public runtime models
 - a replay engine for deterministic testing and validation
 - the base for sink delivery adapters, with `stdout`, file, webhook, queue, and object-storage support already present
 - an explicit sink configuration grammar with canonical sink names

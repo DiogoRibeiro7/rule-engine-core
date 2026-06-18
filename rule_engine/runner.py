@@ -9,7 +9,8 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .compiler import compile_rule, load_and_compile_rule_files
 from .declarative import DeclarativeRule, get_rule_schema, load_rule_file
-from .runtime import CompiledEngine, CompiledRule, DeclarativeEngine, EmittedAlert, ReplayDeliveryReport
+from .models import EmittedAlert, ReplayDeliveryReport
+from .runtime import CompiledEngine, CompiledRule, DeclarativeEngine
 from .types import SensorEvent
 
 

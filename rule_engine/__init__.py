@@ -1,3 +1,10 @@
+from .models import (
+    EmittedAlert,
+    EngineConfig,
+    EvaluationResult,
+    ReplayDeliveryReport,
+    RuleMetadata,
+)
 from .api import (
     EmbeddedEngine,
     build_engine,
@@ -37,13 +44,7 @@ from .sinks import (
     StdoutSink,
     WebhookSink,
 )
-from .runtime import (
-    CompiledEngine,
-    EngineConfig,
-    EvaluationResult,
-    ReplayDeliveryReport,
-    RuleMetadata,
-)
+from .runtime import CompiledEngine
 from .types import Alert, RuleContext, SensorEvent, StoreRecord
 from .window import EntityWindow
 
@@ -58,6 +59,7 @@ __all__ = [
     "DeliveryMetrics",
     "DeliveryMetricsSnapshot",
     "EmbeddedEngine",
+    "EmittedAlert",
     "EngineConfig",
     "EvaluationResult",
     "EntityWindow",
