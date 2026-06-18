@@ -11,7 +11,8 @@ extended toward a fully implemented sink delivery system.
 - Declarative rules now compile into executable in-memory runtime objects.
 - Replay evaluation supports `event`, `window`, `absence`, `composite`, and `scheduled` triggers.
 - Unit tests assert alert behavior, timer expiry, and lookback handling.
-- Sink definitions are not fully implemented yet; they are still mostly declarative metadata.
+- A first-class sink contract now exists, with `stdout` and file sinks implemented.
+- Sink delivery is not fully implemented yet; webhook, queue, and object-storage adapters are still pending.
 
 ## Repository layout
 
@@ -28,7 +29,7 @@ What this repo is:
 - a core rule-evaluation runtime
 - a declarative YAML rule compiler/executor
 - a replay engine for deterministic testing and validation
-- the base for future sink delivery adapters
+- the base for sink delivery adapters, with `stdout` and file support already present
 
 What this repo is not yet:
 

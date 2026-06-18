@@ -8,6 +8,7 @@ from statistics import mean, pstdev
 from typing import Any, Dict, Iterable, List, Optional
 
 from .declarative import Action, DeclarativeRule
+from .sinks import DeliveryRequest, DeliveryResult, SinkRegistry
 from .types import Alert, RuleContext, SensorEvent
 from .window import EntityWindow
 
@@ -182,6 +183,7 @@ class EmittedAlert:
     rule_id: str
     alert: Alert
     timestamp: datetime
+    delivery_results: List[DeliveryResult] = field(default_factory=list)
 
 
 def _flatten_context(data: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
@@ -385,6 +387,7 @@ class DeclarativeEngine:
         self._rule_map = {rule.rule_id: rule for rule in self.rules}
         self._entities: Dict[str, Dict[str, RuleState]] = {}
         self._watermark: Optional[datetime] = None
+        self.sink_registry = SinkRegistry()
 
     def replay(
         self, events: Iterable[SensorEvent], until: Optional[datetime] = None
@@ -678,7 +681,41 @@ class DeclarativeEngine:
                     ),
                 )
             )
+            emitted[-1].delivery_results.extend(
+                self._deliver_action_sinks(action, emitted[-1])
+            )
         return emitted
+
+    def _deliver_action_sinks(
+        self, action: Action, emitted_alert: EmittedAlert
+    ) -> List[DeliveryResult]:
+        results: List[DeliveryResult] = []
+        for sink in action.sinks:
+            sink_type = sink.get("type")
+            if not sink_type:
+                results.append(
+                    DeliveryResult(
+                        sink_type="unknown",
+                        status="failed",
+                        detail="Sink config is missing required field 'type'",
+                    )
+                )
+                continue
+            results.append(
+                self.sink_registry.deliver(
+                    DeliveryRequest(
+                        sink_type=sink_type,
+                        rule_id=emitted_alert.rule_id,
+                        entity_id=emitted_alert.entity_id,
+                        severity=emitted_alert.alert.severity,
+                        message=emitted_alert.alert.message,
+                        timestamp=emitted_alert.timestamp,
+                        payload=emitted_alert.alert.metadata,
+                        config=sink,
+                    )
+                )
+            )
+        return results
 
     def _composite_condition_active(self, rule: CompiledRule, state: RuleState) -> bool:
         values = [state.source_absent.get(sensor_type, False) for sensor_type in rule.sensor_types]
