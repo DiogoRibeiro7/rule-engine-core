@@ -3,6 +3,8 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
+import pytest
+
 from rule_engine.declarative import load_rule_yaml
 from rule_engine.runtime import DeclarativeEngine
 from rule_engine.sinks import (
@@ -364,6 +366,87 @@ def test_sink_registry_can_reset_delivery_metrics():
     assert snapshot.overall.total_requests == 0
     assert snapshot.overall.dead_letters == 0
     assert snapshot.by_sink == {}
+
+
+def test_sink_registry_records_latency_and_structured_delivery_log():
+    class FlakySink:
+        sink_type = "flaky"
+
+        def __init__(self):
+            self.calls = 0
+
+        def deliver(self, request):
+            self.calls += 1
+            if self.calls == 1:
+                return DeliveryResult(
+                    sink_type="flaky",
+                    status="failed",
+                    detail="temporary",
+                    retryable=True,
+                )
+            return DeliveryResult(
+                sink_type="flaky",
+                status="delivered",
+                detail="ok",
+            )
+
+    registry = SinkRegistry(adapters=[FlakySink()])
+    with patch(
+        "rule_engine.sinks.time.perf_counter",
+        side_effect=[1.0, 1.01, 2.0, 2.025],
+    ):
+        result = registry.deliver(
+            DeliveryRequest(
+                sink_type="flaky",
+                rule_id="rule-1",
+                entity_id="entity-1",
+                severity="warning",
+                message="hello",
+                timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+                payload={},
+                config={"type": "flaky", "retry": {"max_attempts": 2}},
+            )
+        )
+
+    snapshot = registry.metrics()
+    log = registry.delivery_log()
+
+    assert result.status == "delivered"
+    assert result.metadata["attempt_latency_ms"] == 25.0
+    assert result.metadata["total_latency_ms"] == 35.0
+    assert snapshot.overall.total_attempts == 2
+    assert snapshot.overall.total_latency_ms == pytest.approx(35.0)
+    assert snapshot.overall.max_latency_ms == pytest.approx(25.0)
+    assert snapshot.overall.average_latency_ms == pytest.approx(17.5)
+    assert len(log) == 1
+    assert log[0].sink_type == "flaky"
+    assert log[0].status == "delivered"
+    assert log[0].attempt_count == 2
+    assert log[0].retry_count == 1
+    assert log[0].latency_ms == 35.0
+    assert log[0].dead_lettered is False
+
+
+def test_sink_registry_can_clear_delivery_log():
+    registry = SinkRegistry()
+    registry.deliver(
+        DeliveryRequest(
+            sink_type="missing",
+            rule_id="rule-1",
+            entity_id="entity-1",
+            severity="info",
+            message="hello",
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            payload={},
+            config={"type": "missing"},
+        )
+    )
+
+    assert len(registry.delivery_log()) == 1
+
+    registry.clear_delivery_log()
+
+    assert registry.delivery_log() == []
 
 
 def test_file_dead_letter_store_writes_record(tmp_path: Path):

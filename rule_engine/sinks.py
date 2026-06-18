@@ -41,12 +41,36 @@ class DeliveryMetrics:
     retryable_failures: int = 0
     retries_attempted: int = 0
     dead_letters: int = 0
+    total_latency_ms: float = 0.0
+    max_latency_ms: float = 0.0
+
+    @property
+    def average_latency_ms(self) -> float:
+        if self.total_attempts == 0:
+            return 0.0
+        return self.total_latency_ms / self.total_attempts
 
 
 @dataclass(frozen=True)
 class DeliveryMetricsSnapshot:
     overall: DeliveryMetrics
     by_sink: Dict[str, DeliveryMetrics]
+
+
+@dataclass(frozen=True)
+class DeliveryLogEntry:
+    sink_type: str
+    rule_id: str
+    entity_id: str
+    severity: str
+    status: str
+    detail: str
+    attempt_count: int
+    retry_count: int
+    latency_ms: float
+    dead_lettered: bool
+    retryable: bool
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -152,6 +176,7 @@ class SinkRegistry:
         self.dead_letter_store = dead_letter_store
         self._overall_metrics = DeliveryMetrics()
         self._sink_metrics: Dict[str, DeliveryMetrics] = {}
+        self._delivery_log: List[DeliveryLogEntry] = []
         for adapter in adapters or []:
             self.register(adapter)
 
@@ -167,9 +192,15 @@ class SinkRegistry:
             by_sink=dict(self._sink_metrics),
         )
 
+    def delivery_log(self) -> List[DeliveryLogEntry]:
+        return list(self._delivery_log)
+
     def reset_metrics(self) -> None:
         self._overall_metrics = DeliveryMetrics()
         self._sink_metrics = {}
+
+    def clear_delivery_log(self) -> None:
+        self._delivery_log = []
 
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
         self._increment_metrics(request.sink_type, total_requests=1)
@@ -185,14 +216,25 @@ class SinkRegistry:
                 status="unsupported",
                 detail=f"No adapter registered for sink type '{request.sink_type}'",
             )
-            self._record_dead_letter(request, result)
+            dead_lettered = self._record_dead_letter(request, result)
+            self._append_delivery_log(
+                request=request,
+                result=result,
+                attempt_count=0,
+                latency_ms=0.0,
+                dead_lettered=dead_lettered,
+            )
             return result
 
         retry_policy = RetryPolicy.from_config(request.config)
         last_result: DeliveryResult | None = None
         backoff_schedule: List[float] = []
+        total_latency_ms = 0.0
         for attempt in range(1, retry_policy.max_attempts + 1):
+            started_at = time.perf_counter()
             result = adapter.deliver(request)
+            latency_ms = (time.perf_counter() - started_at) * 1000.0
+            total_latency_ms += latency_ms
             result_is_delivered = result.status == "delivered"
             result_is_retryable_failure = result.status != "delivered" and result.retryable
             self._increment_metrics(
@@ -201,12 +243,23 @@ class SinkRegistry:
                 delivered=1 if result_is_delivered else 0,
                 failed=0 if result_is_delivered else 1,
                 retryable_failures=1 if result_is_retryable_failure else 0,
+                total_latency_ms=latency_ms,
+                max_latency_ms=latency_ms,
             )
+            result.metadata.setdefault("attempt_latency_ms", round(latency_ms, 3))
+            result.metadata.setdefault("total_latency_ms", round(total_latency_ms, 3))
             result.metadata.setdefault("attempt", attempt)
             result.metadata.setdefault("max_attempts", retry_policy.max_attempts)
             result.metadata.setdefault("backoff_schedule_s", list(backoff_schedule))
             last_result = result
             if result_is_delivered:
+                self._append_delivery_log(
+                    request=request,
+                    result=result,
+                    attempt_count=attempt,
+                    latency_ms=total_latency_ms,
+                    dead_lettered=False,
+                )
                 return result
             if not result.retryable:
                 break
@@ -218,15 +271,22 @@ class SinkRegistry:
                     time.sleep(delay)
 
         assert last_result is not None
-        self._record_dead_letter(request, last_result)
+        dead_lettered = self._record_dead_letter(request, last_result)
+        self._append_delivery_log(
+            request=request,
+            result=last_result,
+            attempt_count=int(last_result.metadata.get("attempt", 0)),
+            latency_ms=total_latency_ms,
+            dead_lettered=dead_lettered,
+        )
         return last_result
 
     def _record_dead_letter(
         self, request: DeliveryRequest, result: DeliveryResult
-    ) -> None:
+    ) -> bool:
         self._increment_metrics(request.sink_type, dead_letters=1)
         if self.dead_letter_store is None:
-            return
+            return True
         self.dead_letter_store.record(
             DeadLetterRecord(
                 sink_type=request.sink_type,
@@ -240,8 +300,34 @@ class SinkRegistry:
                 result=result,
             )
         )
+        return True
 
-    def _increment_metrics(self, sink_type: str, **increments: int) -> None:
+    def _append_delivery_log(
+        self,
+        request: DeliveryRequest,
+        result: DeliveryResult,
+        attempt_count: int,
+        latency_ms: float,
+        dead_lettered: bool,
+    ) -> None:
+        self._delivery_log.append(
+            DeliveryLogEntry(
+                sink_type=request.sink_type,
+                rule_id=request.rule_id,
+                entity_id=request.entity_id,
+                severity=request.severity,
+                status=result.status,
+                detail=result.detail,
+                attempt_count=attempt_count,
+                retry_count=max(0, attempt_count - 1),
+                latency_ms=round(latency_ms, 3),
+                dead_lettered=dead_lettered,
+                retryable=result.retryable,
+                metadata=dict(result.metadata),
+            )
+        )
+
+    def _increment_metrics(self, sink_type: str, **increments: float) -> None:
         self._overall_metrics = self._merge_metrics(self._overall_metrics, increments)
         current = self._sink_metrics.get(sink_type, DeliveryMetrics())
         self._sink_metrics[sink_type] = self._merge_metrics(current, increments)
@@ -249,11 +335,14 @@ class SinkRegistry:
     @staticmethod
     def _merge_metrics(
         current: DeliveryMetrics,
-        increments: Dict[str, int],
+        increments: Dict[str, float],
     ) -> DeliveryMetrics:
         values = current.__dict__.copy()
         for key, amount in increments.items():
-            values[key] = values.get(key, 0) + amount
+            if key == "max_latency_ms":
+                values[key] = max(values.get(key, 0.0), amount)
+            else:
+                values[key] = values.get(key, 0) + amount
         return DeliveryMetrics(**values)
 
 
