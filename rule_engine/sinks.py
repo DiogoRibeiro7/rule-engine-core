@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import socket
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Protocol
+from urllib import error, request
 
 
 @dataclass(frozen=True)
@@ -108,3 +110,218 @@ class FileSink:
             detail="Delivered to file",
             metadata={"path": str(path)},
         )
+
+
+class WebhookSink:
+    sink_type = "webhook"
+
+    def deliver(self, req: DeliveryRequest) -> DeliveryResult:
+        url = req.config.get("url")
+        if not url:
+            return DeliveryResult(
+                sink_type=self.sink_type,
+                status="failed",
+                detail="Missing required sink config field 'url'",
+            )
+
+        timeout_s = float(req.config.get("timeout_s", 5.0))
+        payload = {
+            "entity_id": req.entity_id,
+            "rule_id": req.rule_id,
+            "severity": req.severity,
+            "message": req.message,
+            "timestamp": req.timestamp.isoformat(),
+            "payload": req.payload,
+        }
+        body = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        headers.update(req.config.get("headers", {}))
+        method = str(req.config.get("method", "POST")).upper()
+        http_request = request.Request(
+            url=url,
+            data=body,
+            headers=headers,
+            method=method,
+        )
+
+        try:
+            with request.urlopen(http_request, timeout=timeout_s) as response:
+                status_code = getattr(response, "status", None) or response.getcode()
+                return DeliveryResult(
+                    sink_type=self.sink_type,
+                    status="delivered",
+                    detail="Delivered to webhook",
+                    metadata={"status_code": status_code, "url": url},
+                )
+        except error.HTTPError as exc:
+            retryable = exc.code >= 500
+            return DeliveryResult(
+                sink_type=self.sink_type,
+                status="failed",
+                detail=f"Webhook returned HTTP {exc.code}",
+                retryable=retryable,
+                metadata={"status_code": exc.code, "url": url},
+            )
+        except (error.URLError, TimeoutError, socket.timeout) as exc:
+            return DeliveryResult(
+                sink_type=self.sink_type,
+                status="failed",
+                detail=f"Webhook delivery failed: {exc}",
+                retryable=True,
+                metadata={"url": url},
+            )
+
+
+class QueueTransport(Protocol):
+    def send(self, queue: str, payload: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+        ...
+
+
+class InMemoryQueueTransport:
+    def __init__(self) -> None:
+        self.messages: List[Dict[str, Any]] = []
+
+    def send(self, queue: str, payload: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+        record = {"queue": queue, "payload": payload, "config": config}
+        self.messages.append(record)
+        return {"message_id": str(len(self.messages))}
+
+
+class QueueSink:
+    sink_type = "queue"
+
+    def __init__(self, transport: QueueTransport | None = None) -> None:
+        self.transport = transport or InMemoryQueueTransport()
+
+    def deliver(self, req: DeliveryRequest) -> DeliveryResult:
+        queue_name = req.config.get("queue")
+        if not queue_name:
+            return DeliveryResult(
+                sink_type=self.sink_type,
+                status="failed",
+                detail="Missing required sink config field 'queue'",
+            )
+
+        payload = {
+            "entity_id": req.entity_id,
+            "rule_id": req.rule_id,
+            "severity": req.severity,
+            "message": req.message,
+            "timestamp": req.timestamp.isoformat(),
+            "payload": req.payload,
+        }
+        try:
+            transport_result = self.transport.send(queue_name, payload, req.config)
+            return DeliveryResult(
+                sink_type=self.sink_type,
+                status="delivered",
+                detail="Delivered to queue",
+                metadata={
+                    "queue": queue_name,
+                    **transport_result,
+                },
+            )
+        except TimeoutError as exc:
+            return DeliveryResult(
+                sink_type=self.sink_type,
+                status="failed",
+                detail=f"Queue delivery timed out: {exc}",
+                retryable=True,
+                metadata={"queue": queue_name},
+            )
+        except Exception as exc:
+            retryable = bool(req.config.get("retryable", False))
+            return DeliveryResult(
+                sink_type=self.sink_type,
+                status="failed",
+                detail=f"Queue delivery failed: {exc}",
+                retryable=retryable,
+                metadata={"queue": queue_name},
+            )
+
+
+class ObjectStorageTransport(Protocol):
+    def put_object(
+        self,
+        bucket: str,
+        key: str,
+        body: str,
+        config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        ...
+
+
+class FileObjectStorageTransport:
+    def __init__(self, root: str | Path = ".object_store") -> None:
+        self.root = Path(root)
+        self.objects: List[Dict[str, Any]] = []
+
+    def put_object(
+        self,
+        bucket: str,
+        key: str,
+        body: str,
+        config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        path = self.root / bucket / key
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        self.objects.append({"bucket": bucket, "key": key, "body": body, "config": config})
+        return {"bucket": bucket, "key": key, "path": str(path)}
+
+
+class ObjectStorageSink:
+    sink_type = "object_storage"
+
+    def __init__(self, transport: ObjectStorageTransport | None = None) -> None:
+        self.transport = transport or FileObjectStorageTransport()
+
+    def deliver(self, req: DeliveryRequest) -> DeliveryResult:
+        bucket = req.config.get("bucket")
+        if not bucket:
+            return DeliveryResult(
+                sink_type=self.sink_type,
+                status="failed",
+                detail="Missing required sink config field 'bucket'",
+            )
+
+        prefix = str(req.config.get("prefix", "")).strip("/")
+        extension = str(req.config.get("extension", "jsonl")).lstrip(".")
+        timestamp_token = req.timestamp.strftime("%Y%m%dT%H%M%SZ")
+        base_name = f"{req.rule_id}-{timestamp_token}.{extension}"
+        key = f"{prefix}/{base_name}" if prefix else base_name
+        body = json.dumps(
+            {
+                "entity_id": req.entity_id,
+                "rule_id": req.rule_id,
+                "severity": req.severity,
+                "message": req.message,
+                "timestamp": req.timestamp.isoformat(),
+                "payload": req.payload,
+            }
+        )
+        try:
+            result = self.transport.put_object(bucket, key, body, req.config)
+            return DeliveryResult(
+                sink_type=self.sink_type,
+                status="delivered",
+                detail="Delivered to object storage",
+                metadata=result,
+            )
+        except TimeoutError as exc:
+            return DeliveryResult(
+                sink_type=self.sink_type,
+                status="failed",
+                detail=f"Object storage delivery timed out: {exc}",
+                retryable=True,
+                metadata={"bucket": bucket, "key": key},
+            )
+        except Exception as exc:
+            retryable = bool(req.config.get("retryable", False))
+            return DeliveryResult(
+                sink_type=self.sink_type,
+                status="failed",
+                detail=f"Object storage delivery failed: {exc}",
+                retryable=retryable,
+                metadata={"bucket": bucket, "key": key},
+            )
