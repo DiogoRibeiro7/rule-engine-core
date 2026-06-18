@@ -15,7 +15,8 @@ from rule_engine.runner import (
     replay_events_with_report,
 )
 from rule_engine.compiler import compile_rule, load_and_compile_rule_files
-from rule_engine.runtime import CompiledEngine, DeclarativeEngine
+from rule_engine.runtime import CompiledEngine, DeclarativeEngine, EngineConfig
+from rule_engine.sinks import SinkRegistry, StdoutSink
 from rule_engine.types import SensorEvent
 
 
@@ -195,6 +196,88 @@ actions:
     assert len(alerts) == 1
     assert alerts[0].rule_id == "source_primary_spike"
     assert alerts[0].alert.message == "Primary source spike for entity-1: 185.0"
+
+
+def test_declarative_engine_uses_injected_sink_registry():
+    yaml_text = """
+rule_id: source_primary_spike
+description: Event spike
+trigger:
+  type: event
+sources:
+  - sensor_type: source_primary
+    entity_id: "*"
+condition:
+  operator: AND
+  operands:
+    - metric: value
+      operator: gt
+      value: 180
+actions:
+  - severity: critical
+    message: "Primary source spike for {{entity_id}}: {{value}}"
+    sinks:
+      - type: stdout
+"""
+    sink_registry = SinkRegistry(adapters=[StdoutSink()])
+    engine = DeclarativeEngine([load_rule_yaml(yaml_text)], sink_registry=sink_registry)
+
+    alerts = engine.replay(
+        [
+            SensorEvent(
+                entity_id="entity-1",
+                sensor_type="source_primary",
+                value=185.0,
+                timestamp_ms=_ts(2024, 1, 1, 0, 0),
+            )
+        ]
+    )
+
+    assert len(alerts) == 1
+    assert engine.sink_registry is sink_registry
+    assert alerts[0].delivery_results[0].status == "delivered"
+
+
+def test_compiled_engine_supports_scheduled_replay_with_explicit_initial_watermark():
+    yaml_text = """
+rule_id: scheduled_source_review
+description: Scheduled source review
+trigger:
+  type: scheduled
+  cron: 0 8 * * *
+sources:
+  - sensor_type: source_primary
+    entity_id: "*"
+condition:
+  operator: AND
+  operands:
+    - const: true
+actions:
+  - severity: info
+    message: "Scheduled review"
+    sinks: []
+"""
+    compiled_rule = compile_rule(load_rule_yaml(yaml_text))
+    engine = CompiledEngine(
+        [compiled_rule],
+        config=EngineConfig(initial_watermark=datetime(2024, 1, 1, 7, 0, tzinfo=UTC)),
+    )
+
+    alerts = engine.replay(
+        [
+            SensorEvent(
+                entity_id="entity-1",
+                sensor_type="source_primary",
+                value=95.0,
+                timestamp_ms=_ts(2024, 1, 1, 7, 30),
+            )
+        ],
+        until=datetime(2024, 1, 1, 8, 0, tzinfo=UTC),
+    )
+
+    assert len(alerts) == 1
+    assert alerts[0].timestamp == datetime(2024, 1, 1, 8, 0, tzinfo=UTC)
+    assert alerts[0].rule_id == "scheduled_source_review"
 
 
 def test_window_rule_emits_after_window_close():

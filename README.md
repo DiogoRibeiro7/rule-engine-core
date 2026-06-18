@@ -14,6 +14,7 @@ extended toward a fully implemented sink delivery system.
 - Compile-time rule loading is now separated from execution through `rule_engine.compiler` and `CompiledEngine`.
 - Declarative rules are schema-validated at load time with path-aware errors for malformed YAML and bad field shapes.
 - Trigger fields, condition operators, duration values, and cron expressions are validated before execution.
+- Runtime startup behavior is configurable through `EngineConfig` and explicit sink-registry injection.
 - Replay evaluation supports `event`, `window`, `absence`, `composite`, and `scheduled` triggers.
 - Unit tests assert alert behavior, timer expiry, and lookback handling.
 - A first-class sink contract now exists, with `stdout`, file, webhook, queue, and object-storage sinks implemented.
@@ -43,6 +44,7 @@ What this repo is:
 - a core rule-evaluation runtime
 - a declarative YAML rule compiler/executor
 - a compile/runtime split that supports embedding compiled rules without going through the CLI
+- an explicit engine-configuration surface for runtime startup and scheduling behavior
 - a replay engine for deterministic testing and validation
 - the base for sink delivery adapters, with `stdout`, file, webhook, queue, and object-storage support already present
 - an explicit sink configuration grammar with canonical sink names
@@ -107,10 +109,13 @@ Embed the runtime from Python using the compile/runtime split:
 ```python
 from rule_engine.compiler import compile_rule
 from rule_engine.declarative import load_rule_yaml
-from rule_engine.runtime import CompiledEngine
+from rule_engine.runtime import CompiledEngine, EngineConfig
 
 compiled_rule = compile_rule(load_rule_yaml(yaml_text))
-engine = CompiledEngine([compiled_rule])
+engine = CompiledEngine(
+    [compiled_rule],
+    config=EngineConfig(initial_watermark=start_time),
+)
 alerts = engine.replay(events)
 ```
 

@@ -28,7 +28,7 @@ from .sinks import (
     StdoutSink,
     WebhookSink,
 )
-from .runtime import CompiledEngine, ReplayDeliveryReport
+from .runtime import CompiledEngine, EngineConfig, ReplayDeliveryReport
 from .types import Alert, RuleContext, SensorEvent, StoreRecord
 from .window import EntityWindow
 
@@ -42,6 +42,7 @@ __all__ = [
     "DeliveryLogEntry",
     "DeliveryMetrics",
     "DeliveryMetricsSnapshot",
+    "EngineConfig",
     "EntityWindow",
     "FileDeadLetterStore",
     "FileSink",

@@ -217,6 +217,12 @@ class ReplayDeliveryReport:
     delivery_log: List[DeliveryLogEntry]
 
 
+@dataclass(frozen=True)
+class EngineConfig:
+    initial_watermark: Optional[datetime] = None
+    schedule_start: Optional[datetime] = None
+
+
 def _flatten_context(data: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
     flattened: Dict[str, Any] = {}
     for key, value in data.items():
@@ -487,12 +493,22 @@ def _evaluate_operands(operator: Optional[str], operands: List[Operand], values:
 
 
 class CompiledEngine:
-    def __init__(self, rules: Iterable[CompiledRule]):
+    def __init__(
+        self,
+        rules: Iterable[CompiledRule],
+        config: Optional[EngineConfig] = None,
+        sink_registry: Optional[SinkRegistry] = None,
+    ):
         self.rules = list(rules)
+        self.config = config or EngineConfig()
         self._rule_map = {rule.rule_id: rule for rule in self.rules}
         self._entities: Dict[str, Dict[str, RuleState]] = {}
-        self._watermark: Optional[datetime] = None
-        self.sink_registry = SinkRegistry()
+        self._watermark: Optional[datetime] = (
+            _normalize_datetime(self.config.initial_watermark)
+            if self.config.initial_watermark is not None
+            else None
+        )
+        self.sink_registry = sink_registry or SinkRegistry()
 
     def replay(
         self, events: Iterable[SensorEvent], until: Optional[datetime] = None
@@ -575,10 +591,19 @@ class CompiledEngine:
             if rule.trigger_type == "window" and rule.slide is not None:
                 state.next_window_end = None
             if rule.trigger_type == "scheduled" and rule.cron is not None:
-                now = self._watermark or datetime.now(UTC)
+                now = self._resolve_schedule_start()
                 state.next_schedule_fire = _next_cron_fire(now, rule.cron)
             states[rule.rule_id] = state
         self._entities[entity_id] = states
+
+    def _resolve_schedule_start(self) -> datetime:
+        if self._watermark is not None:
+            return self._watermark
+        if self.config.schedule_start is not None:
+            return _normalize_datetime(self.config.schedule_start)
+        raise ValueError(
+            "Scheduled rules require EngineConfig.initial_watermark or EngineConfig.schedule_start before entity registration"
+        )
 
     def _next_due_time(self) -> Optional[datetime]:
         due_times: List[datetime] = []
@@ -854,5 +879,14 @@ class CompiledEngine:
 
 
 class DeclarativeEngine(CompiledEngine):
-    def __init__(self, rules: Iterable[DeclarativeRule]):
-        super().__init__([CompiledRule.from_declarative(rule) for rule in rules])
+    def __init__(
+        self,
+        rules: Iterable[DeclarativeRule],
+        config: Optional[EngineConfig] = None,
+        sink_registry: Optional[SinkRegistry] = None,
+    ):
+        super().__init__(
+            [CompiledRule.from_declarative(rule) for rule in rules],
+            config=config,
+            sink_registry=sink_registry,
+        )
