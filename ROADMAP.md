@@ -1,7 +1,8 @@
 # Roadmap
 
-This roadmap assumes the current repository remains a compact reference
-implementation, not a full production streaming platform.
+This roadmap assumes the repository evolves from a compact reference
+implementation into a production-capable core with a fully implemented sink
+delivery system.
 
 ## North Star
 
@@ -10,7 +11,7 @@ Build a small, trustworthy declarative rule engine that:
 - executes rules deterministically in memory
 - keeps YAML semantics aligned with runtime behavior
 - is easy to extend and test
-- can serve as a clean reference before any production adapter work begins
+- delivers rule outcomes through real, reliable sink integrations
 
 ## Current State
 
@@ -18,6 +19,7 @@ Build a small, trustworthy declarative rule engine that:
 - Supported trigger families are `event`, `window`, `absence`, `composite`, and `scheduled`.
 - Tests cover core alert behavior and replay timing.
 - The package is now generic; the sample rules are only reference fixtures.
+- Sink definitions are still mostly declarative surface area and metadata, not a complete delivery layer.
 
 ## Phase 1: Stabilize The Core
 
@@ -46,8 +48,8 @@ Deliverables:
 - Implement the aggregation functions that are worth keeping long term.
 - Define and enforce the supported condition grammar.
 - Make template rendering explicit and predictable, including missing-variable behavior.
-- Decide whether sinks remain metadata-only or become executable adapters.
-- If sinks are executable, start with one minimal adapter interface and one no-risk sink such as stdout or file output.
+- Define and enforce the sink configuration grammar instead of treating sink payloads as opaque dictionaries.
+- Introduce a stable sink adapter interface and start with low-risk executable sinks such as stdout, file, and webhook.
 
 Exit criteria:
 
@@ -87,7 +89,39 @@ Exit criteria:
 
 - A new contributor can run checks and understand the supported workflow quickly.
 
-## Phase 5: Production Boundary Decisions
+## Phase 5: Build The Sink Delivery System
+
+Goal: implement real sink delivery with reliability semantics instead of leaving
+delivery as metadata attached to alerts.
+
+Deliverables:
+
+- Add a first-class sink dispatch layer inside `rule_engine/`.
+- Support sink registration and configuration through explicit typed adapters.
+- Implement at least these concrete sinks:
+  - stdout or console sink
+  - file or NDJSON sink
+  - webhook sink
+  - SQS-style queue sink
+  - object-storage sink
+- Define a delivery contract for each sink:
+  - payload shape
+  - retryable vs terminal errors
+  - timeout handling
+  - idempotency expectations
+  - structured delivery result reporting
+- Add retry policy support with bounded retries and backoff.
+- Add dead-letter or failed-delivery recording for undeliverable events.
+- Add delivery metrics and structured logging around success, failure, latency, and retry counts.
+- Add integration tests for each sink type and failure mode.
+
+Exit criteria:
+
+- Sink definitions in rules execute through real adapters.
+- Delivery failures are observable and classified correctly.
+- The engine can deliver alerts end to end without custom downstream glue code.
+
+## Phase 6: Production Boundary Decisions
 
 Goal: decide what this repo is, and what it is not.
 
@@ -101,7 +135,7 @@ Questions to answer:
 
 - Should cron support remain intentionally narrow, or become more complete?
 - Should rule execution stay replay-based only, or support a live process loop?
-- Should sink behavior be part of this repo, or delegated to downstream systems?
+- Which sinks are mandatory for the supported product surface, and which stay optional adapters?
 - Should domain-specific rule packs live here or in separate example repos?
 
 Exit criteria:
@@ -114,7 +148,8 @@ Exit criteria:
 2. Phase 2: Complete the declarative language
 3. Phase 3: Improve runtime structure
 4. Phase 4: Developer experience
-5. Phase 5: Production boundary decisions
+5. Phase 5: Build the sink delivery system
+6. Phase 6: Production boundary decisions
 
 ## Immediate Next Steps
 
@@ -122,3 +157,4 @@ Exit criteria:
 2. Add schema-backed validation for YAML rules.
 3. Add failure-mode tests for malformed rules and unsupported expressions.
 4. Audit the YAML surface and remove any fields the runtime will not support.
+5. Design the sink adapter contract before implementing individual sink backends.
