@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import socket
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -33,12 +34,35 @@ class DeliveryResult:
 @dataclass(frozen=True)
 class RetryPolicy:
     max_attempts: int = 1
+    base_delay_s: float = 0.0
+    multiplier: float = 2.0
+    max_delay_s: float | None = None
+    sleep_enabled: bool = False
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "RetryPolicy":
         retry_config = config.get("retry", {})
         max_attempts = int(retry_config.get("max_attempts", 1))
-        return cls(max_attempts=max(1, max_attempts))
+        base_delay_s = float(retry_config.get("base_delay_s", 0.0))
+        multiplier = float(retry_config.get("multiplier", 2.0))
+        max_delay_value = retry_config.get("max_delay_s")
+        max_delay_s = float(max_delay_value) if max_delay_value is not None else None
+        sleep_enabled = bool(retry_config.get("sleep", False))
+        return cls(
+            max_attempts=max(1, max_attempts),
+            base_delay_s=max(0.0, base_delay_s),
+            multiplier=max(1.0, multiplier),
+            max_delay_s=max_delay_s if max_delay_s is None else max(0.0, max_delay_s),
+            sleep_enabled=sleep_enabled,
+        )
+
+    def backoff_delay(self, attempt: int) -> float:
+        if attempt <= 1 or self.base_delay_s <= 0:
+            return 0.0
+        delay = self.base_delay_s * (self.multiplier ** (attempt - 2))
+        if self.max_delay_s is not None:
+            delay = min(delay, self.max_delay_s)
+        return delay
 
 
 @dataclass(frozen=True)
@@ -130,15 +154,22 @@ class SinkRegistry:
 
         retry_policy = RetryPolicy.from_config(request.config)
         last_result: DeliveryResult | None = None
+        backoff_schedule: List[float] = []
         for attempt in range(1, retry_policy.max_attempts + 1):
             result = adapter.deliver(request)
             result.metadata.setdefault("attempt", attempt)
             result.metadata.setdefault("max_attempts", retry_policy.max_attempts)
+            result.metadata.setdefault("backoff_schedule_s", list(backoff_schedule))
             last_result = result
             if result.status == "delivered":
                 return result
             if not result.retryable:
                 break
+            if attempt < retry_policy.max_attempts:
+                delay = retry_policy.backoff_delay(attempt + 1)
+                backoff_schedule.append(delay)
+                if retry_policy.sleep_enabled and delay > 0:
+                    time.sleep(delay)
 
         assert last_result is not None
         self._record_dead_letter(request, last_result)

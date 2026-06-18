@@ -50,6 +50,25 @@ def test_sink_registry_reports_unsupported_sink():
 def test_retry_policy_defaults_to_single_attempt():
     policy = RetryPolicy.from_config({})
     assert policy.max_attempts == 1
+    assert policy.base_delay_s == 0.0
+
+
+def test_retry_policy_parses_backoff_config():
+    policy = RetryPolicy.from_config(
+        {
+            "retry": {
+                "max_attempts": 4,
+                "base_delay_s": 0.5,
+                "multiplier": 3,
+                "max_delay_s": 2,
+            }
+        }
+    )
+
+    assert policy.max_attempts == 4
+    assert policy.backoff_delay(2) == 0.5
+    assert policy.backoff_delay(3) == 1.5
+    assert policy.backoff_delay(4) == 2.0
 
 
 def test_sink_registry_retries_retryable_failures():
@@ -91,7 +110,106 @@ def test_sink_registry_retries_retryable_failures():
 
     assert result.status == "delivered"
     assert result.metadata["attempt"] == 3
+    assert result.metadata["backoff_schedule_s"] == [0.0, 0.0]
     assert sink.calls == 3
+
+
+def test_sink_registry_records_backoff_schedule():
+    class FlakySink:
+        sink_type = "flaky"
+
+        def __init__(self):
+            self.calls = 0
+
+        def deliver(self, request):
+            self.calls += 1
+            if self.calls < 3:
+                return DeliveryResult(
+                    sink_type="flaky",
+                    status="failed",
+                    detail="temporary",
+                    retryable=True,
+                )
+            return DeliveryResult(
+                sink_type="flaky",
+                status="delivered",
+                detail="ok",
+            )
+
+    sink = FlakySink()
+    registry = SinkRegistry(adapters=[sink])
+    result = registry.deliver(
+        DeliveryRequest(
+            sink_type="flaky",
+            rule_id="rule-1",
+            entity_id="entity-1",
+            severity="warning",
+            message="hello",
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            payload={},
+            config={
+                "type": "flaky",
+                "retry": {
+                    "max_attempts": 3,
+                    "base_delay_s": 0.25,
+                    "multiplier": 2.0,
+                    "max_delay_s": 1.0,
+                },
+            },
+        )
+    )
+
+    assert result.status == "delivered"
+    assert result.metadata["backoff_schedule_s"] == [0.25, 0.5]
+
+
+def test_sink_registry_can_sleep_between_retries():
+    class FlakySink:
+        sink_type = "flaky"
+
+        def __init__(self):
+            self.calls = 0
+
+        def deliver(self, request):
+            self.calls += 1
+            if self.calls == 1:
+                return DeliveryResult(
+                    sink_type="flaky",
+                    status="failed",
+                    detail="temporary",
+                    retryable=True,
+                )
+            return DeliveryResult(
+                sink_type="flaky",
+                status="delivered",
+                detail="ok",
+            )
+
+    sink = FlakySink()
+    registry = SinkRegistry(adapters=[sink])
+    with patch("rule_engine.sinks.time.sleep") as sleep_mock:
+        result = registry.deliver(
+            DeliveryRequest(
+                sink_type="flaky",
+                rule_id="rule-1",
+                entity_id="entity-1",
+                severity="warning",
+                message="hello",
+                timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+                payload={},
+                config={
+                    "type": "flaky",
+                    "retry": {
+                        "max_attempts": 2,
+                        "base_delay_s": 0.25,
+                        "sleep": True,
+                    },
+                },
+            )
+        )
+
+    assert result.status == "delivered"
+    sleep_mock.assert_called_once_with(0.25)
 
 
 def test_sink_registry_records_dead_letter_after_final_failure():
