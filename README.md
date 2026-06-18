@@ -42,6 +42,8 @@ extended toward a fully implemented sink delivery system.
 - `docs/architecture.svg` — public-facing architecture diagram for repo pages and social sharing.
 - `docs/rule-language.md` — exact supported declarative rule-language subset.
 - `docs/linkedin-project-kit.md` — reusable LinkedIn project copy, post text, and publishing checklist.
+- `CONTRIBUTING.md` — contributor workflow and repo-specific change rules.
+- `CHANGELOG.md` — user-visible repo history and release notes.
 - `ROADMAP.md` — prioritized next steps for stabilizing and extending the engine.
 - `LICENSE` — MIT license for public reuse.
 
@@ -198,6 +200,11 @@ event-and-timer evaluation model.
 The current development target is no longer just a reference runtime. The end
 goal is a production-capable core with a fully implemented sink delivery
 system. The detailed plan for that work lives in `ROADMAP.md`.
+
+## Project Docs
+
+The contributor workflow lives in `CONTRIBUTING.md`, and user-visible repo
+history lives in `CHANGELOG.md`.
 
 ## Maintenance Rule
 

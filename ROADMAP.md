@@ -31,6 +31,7 @@ Build a small, trustworthy declarative rule engine that:
 - Type checking is now defined in `pyproject.toml` and exercised in CI for the core package.
 - Fixture-driven golden replay tests now pin sample scenario output at the JSON-report level.
 - The repo now ships a small examples section with checked-in neutral-domain rules and event fixtures.
+- The repo now has explicit contribution notes and a top-level changelog.
 - Sink configs now validate against explicit grammar for the implemented sink types.
 - The delivery layer is executable, but production-grade backend breadth and policy depth are still incomplete.
 
