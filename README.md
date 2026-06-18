@@ -15,6 +15,7 @@ extended toward a fully implemented sink delivery system.
 - Declarative rules are schema-validated at load time with path-aware errors for malformed YAML and bad field shapes.
 - Trigger fields, condition operators, duration values, and cron expressions are validated before execution.
 - Runtime startup behavior is configurable through `EngineConfig` and explicit sink-registry injection.
+- Embedding code can now consume typed `RuleMetadata` and `EvaluationResult` objects.
 - Replay evaluation supports `event`, `window`, `absence`, `composite`, and `scheduled` triggers.
 - Unit tests assert alert behavior, timer expiry, and lookback handling.
 - A first-class sink contract now exists, with `stdout`, file, webhook, queue, and object-storage sinks implemented.
@@ -47,6 +48,7 @@ What this repo is:
 - a compile/runtime split that supports embedding compiled rules without going through the CLI
 - an explicit engine-configuration surface for runtime startup and scheduling behavior
 - a lightweight embedding API for building engines from YAML, files, or precompiled rules
+- typed metadata and evaluation result objects for embedding and inspection
 - a replay engine for deterministic testing and validation
 - the base for sink delivery adapters, with `stdout`, file, webhook, queue, and object-storage support already present
 - an explicit sink configuration grammar with canonical sink names
@@ -127,7 +129,9 @@ Use the higher-level embedding API when you do not need to manage the compiler d
 from rule_engine.api import build_engine_from_yaml
 
 embedded = build_engine_from_yaml([yaml_text])
-alerts = embedded.replay(events)
+result = embedded.evaluate(events)
+alerts = result.alerts
+metadata = embedded.rule_metadata()
 ```
 
 ## Supported Language

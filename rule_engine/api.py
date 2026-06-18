@@ -7,7 +7,15 @@ from typing import Iterable, List, Optional
 
 from .compiler import compile_rule, compile_rules, load_and_compile_rule_files
 from .declarative import DeclarativeRule, load_rule_file, load_rule_yaml
-from .runtime import CompiledEngine, CompiledRule, EmittedAlert, EngineConfig, ReplayDeliveryReport
+from .runtime import (
+    CompiledEngine,
+    CompiledRule,
+    EmittedAlert,
+    EngineConfig,
+    EvaluationResult,
+    ReplayDeliveryReport,
+    RuleMetadata,
+)
 from .sinks import SinkRegistry
 from .types import SensorEvent
 
@@ -16,6 +24,9 @@ from .types import SensorEvent
 class EmbeddedEngine:
     compiled_rules: List[CompiledRule]
     engine: CompiledEngine
+
+    def rule_metadata(self) -> List[RuleMetadata]:
+        return self.engine.rule_metadata()
 
     def replay(
         self,
@@ -30,6 +41,13 @@ class EmbeddedEngine:
         until: Optional[datetime] = None,
     ) -> tuple[List[EmittedAlert], ReplayDeliveryReport]:
         return self.engine.replay_with_report(events, until=until)
+
+    def evaluate(
+        self,
+        events: Iterable[SensorEvent],
+        until: Optional[datetime] = None,
+    ) -> EvaluationResult:
+        return self.engine.evaluate(events, until=until)
 
 
 def create_engine(

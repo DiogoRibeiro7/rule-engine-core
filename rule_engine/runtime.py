@@ -188,6 +188,22 @@ class CompiledRule:
     def applies_to_entity(self, entity_id: str) -> bool:
         return self.entity_id_filter in {"*", entity_id}
 
+    def metadata(self) -> "RuleMetadata":
+        return RuleMetadata(
+            rule_id=self.rule_id,
+            description=self.description,
+            trigger_type=self.trigger_type,
+            entity_id_filter=self.entity_id_filter,
+            sensor_types=list(self.sensor_types),
+            sink_types=[
+                sink["type"]
+                for action in self.actions
+                for sink in action.sinks
+                if sink.get("type")
+            ],
+            aggregation_ids=[aggregation.agg_id for aggregation in self.aggregations],
+        )
+
 
 @dataclass
 class RuleState:
@@ -215,6 +231,27 @@ class ReplayDeliveryReport:
     alert_count: int
     delivery_metrics: DeliveryMetricsSnapshot
     delivery_log: List[DeliveryLogEntry]
+
+
+@dataclass(frozen=True)
+class RuleMetadata:
+    rule_id: str
+    description: str
+    trigger_type: str
+    entity_id_filter: str
+    sensor_types: List[str]
+    sink_types: List[str]
+    aggregation_ids: List[str]
+
+
+@dataclass(frozen=True)
+class EvaluationResult:
+    alerts: List[EmittedAlert]
+    delivery_report: ReplayDeliveryReport
+
+    @property
+    def alert_count(self) -> int:
+        return len(self.alerts)
 
 
 @dataclass(frozen=True)
@@ -529,12 +566,21 @@ class CompiledEngine:
         alerts = self.replay(events, until=until)
         return alerts, self.delivery_report(alerts)
 
+    def evaluate(
+        self, events: Iterable[SensorEvent], until: Optional[datetime] = None
+    ) -> EvaluationResult:
+        alerts, delivery_report = self.replay_with_report(events, until=until)
+        return EvaluationResult(alerts=alerts, delivery_report=delivery_report)
+
     def delivery_report(self, alerts: List[EmittedAlert]) -> ReplayDeliveryReport:
         return ReplayDeliveryReport(
             alert_count=len(alerts),
             delivery_metrics=self.sink_registry.metrics(),
             delivery_log=self.sink_registry.delivery_log(),
         )
+
+    def rule_metadata(self) -> List[RuleMetadata]:
+        return [rule.metadata() for rule in self.rules]
 
     def process_event(self, event: SensorEvent) -> List[EmittedAlert]:
         timestamp = event.timestamp

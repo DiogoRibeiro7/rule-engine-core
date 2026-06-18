@@ -37,7 +37,13 @@ from .sinks import (
     StdoutSink,
     WebhookSink,
 )
-from .runtime import CompiledEngine, EngineConfig, ReplayDeliveryReport
+from .runtime import (
+    CompiledEngine,
+    EngineConfig,
+    EvaluationResult,
+    ReplayDeliveryReport,
+    RuleMetadata,
+)
 from .types import Alert, RuleContext, SensorEvent, StoreRecord
 from .window import EntityWindow
 
@@ -53,6 +59,7 @@ __all__ = [
     "DeliveryMetricsSnapshot",
     "EmbeddedEngine",
     "EngineConfig",
+    "EvaluationResult",
     "EntityWindow",
     "FileDeadLetterStore",
     "FileSink",
@@ -66,6 +73,7 @@ __all__ = [
     "ReplayDeliveryReport",
     "RetryPolicy",
     "RuleContext",
+    "RuleMetadata",
     "SensorEvent",
     "SinkRegistry",
     "StoreRecord",

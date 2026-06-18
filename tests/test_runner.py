@@ -319,6 +319,74 @@ actions:
     assert alerts[0].rule_id == "source_primary_spike"
 
 
+def test_embedded_engine_exposes_rule_metadata():
+    yaml_text = """
+rule_id: source_primary_spike
+description: Event spike
+trigger:
+  type: event
+sources:
+  - sensor_type: source_primary
+    entity_id: "*"
+condition:
+  operator: AND
+  operands:
+    - metric: value
+      operator: gt
+      value: 180
+actions:
+  - severity: critical
+    message: "Primary source spike for {{entity_id}}: {{value}}"
+    sinks:
+      - type: stdout
+"""
+    embedded = build_engine_from_yaml([yaml_text])
+    metadata = embedded.rule_metadata()
+
+    assert len(metadata) == 1
+    assert metadata[0].rule_id == "source_primary_spike"
+    assert metadata[0].trigger_type == "event"
+    assert metadata[0].sensor_types == ["source_primary"]
+    assert metadata[0].sink_types == ["stdout"]
+
+
+def test_embedded_engine_evaluate_returns_typed_result():
+    yaml_text = """
+rule_id: source_primary_spike
+description: Event spike
+trigger:
+  type: event
+sources:
+  - sensor_type: source_primary
+    entity_id: "*"
+condition:
+  operator: AND
+  operands:
+    - metric: value
+      operator: gt
+      value: 180
+actions:
+  - severity: critical
+    message: "Primary source spike for {{entity_id}}: {{value}}"
+    sinks: []
+"""
+    embedded = build_engine_from_yaml([yaml_text])
+    result = embedded.evaluate(
+        [
+            SensorEvent(
+                entity_id="entity-1",
+                sensor_type="source_primary",
+                value=185.0,
+                timestamp_ms=_ts(2024, 1, 1, 0, 0),
+            )
+        ]
+    )
+
+    assert result.alert_count == 1
+    assert len(result.alerts) == 1
+    assert result.delivery_report.alert_count == 1
+
+
 def test_build_engine_uses_explicit_config_and_sink_registry():
     yaml_text = """
 rule_id: source_primary_spike

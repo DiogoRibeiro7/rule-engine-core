@@ -25,6 +25,7 @@ Build a small, trustworthy declarative rule engine that:
 - Compile-time rule loading is now split from execution through dedicated compiler/runtime entry points.
 - Engine startup and scheduling behavior now have explicit runtime configuration.
 - A lightweight embedding API now exists for YAML, file-based, and precompiled engine construction.
+- Typed rule metadata and evaluation result objects now exist for embedding use cases.
 - Sink configs now validate against explicit grammar for the implemented sink types.
 - The delivery layer is executable, but production-grade backend breadth and policy depth are still incomplete.
 
