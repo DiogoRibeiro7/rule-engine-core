@@ -1,8 +1,9 @@
 # Roadmap
 
-This roadmap assumes the repository evolves from a compact reference
-implementation into a production-capable core with a fully implemented sink
-delivery system.
+This roadmap now reflects the repository after the initial core build-out.
+The original multi-phase implementation plan is effectively complete, so the
+remaining work is the post-core backlog rather than the initial construction
+sequence.
 
 ## North Star
 
@@ -37,141 +38,78 @@ Build a small, trustworthy declarative rule engine that:
 - The implemented sinks now share an explicit versioned delivery envelope with a documented idempotency key contract.
 - Integration tests now cover the implemented sink adapters across success, retry, and dead-letter paths.
 - The repo now has explicit production-boundary decisions for cron scope, replay-first execution, maintained sink surface, and generic-only examples.
+- Common sink-registry setup is now exposed through helper constructors for embedding code.
 
-## Phase 1: Stabilize The Core
+## Completed Foundations
 
-Goal: make the current runtime harder to break and easier to reason about.
+The original planned phases are complete at the repository level:
 
-Deliverables:
+1. Stabilize the core
+2. Complete the declarative language
+3. Improve runtime structure
+4. Developer experience
+5. Build the sink delivery system
+6. Production boundary decisions
 
-- Add `.gitignore` for `__pycache__/`, `.pytest_cache/`, `.benchmarks/`, and similar artifacts.
-- Add stricter YAML validation with explicit error messages for malformed rules.
-- Introduce a formal rule schema and validate rule files before execution.
-- Tighten duration parsing and trigger parsing edge cases.
-- Add negative tests for invalid rules, unsupported operators, and bad cron expressions.
-- Document the exact supported rule-language subset in the repo.
+The rest of this file captures the remaining backlog after that baseline.
 
-Exit criteria:
+## Post-Core Backlog
 
-- Invalid rules fail fast with readable messages.
-- Runtime behavior for every supported trigger is specified and tested.
+### 1. Operational Hardening
 
-## Phase 2: Complete The Declarative Language
+Goal: make the existing sink system safer to operate in less toy-like
+environments without expanding the core into a platform.
 
-Goal: close the biggest gaps between the YAML surface and the actual engine.
+Candidate work:
 
-Deliverables:
+- Add explicit delivery timeout coverage for file/object-storage paths where it
+  makes sense.
+- Add stronger dead-letter persistence options and retention guidance.
+- Add optional structured sink metrics export helpers for downstream embedding
+  code.
+- Add more failure-mode coverage around partial transport exceptions and adapter
+  metadata consistency.
 
-- Implement the aggregation functions that are worth keeping long term.
-- Define and enforce the supported condition grammar.
-- Make template rendering explicit and predictable, including missing-variable behavior.
-- Define and enforce the sink configuration grammar instead of treating sink payloads as opaque dictionaries.
-- Introduce a stable sink adapter interface and start with low-risk executable sinks such as stdout, file, and webhook.
+### 2. Backend Depth
 
-Exit criteria:
+Goal: strengthen the current adapter implementations without widening the
+maintained sink surface prematurely.
 
-- Every field accepted by the YAML format is either executed or removed.
-- There is no dead declarative surface area.
+Candidate work:
 
-## Phase 3: Improve Runtime Structure
+- Replace or wrap the in-memory queue transport with a clearer SQS-style example
+  adapter boundary.
+- Add richer object-storage key strategies and collision guidance.
+- Add webhook request signing or auth-header examples without baking product
+  policy into the core.
 
-Goal: reduce incidental complexity and make extension safer.
+### 3. Embedding Ergonomics
 
-Deliverables:
+Goal: make downstream use cleaner for Python callers without adding a service
+runtime.
 
-- Separate compile-time rule loading from runtime execution more cleanly.
-- Replace any remaining implicit global behavior with explicit engine configuration.
-- Introduce a lightweight public API for embedding the engine from other Python code.
-- Add typed runtime/result objects for alerts, evaluations, and rule metadata.
-- Review naming and module boundaries inside `rule_engine/` for long-term clarity.
+Candidate work:
 
-Exit criteria:
+- Add helper constructors for common sink-registry setups.
+- Add richer typed report/query helpers for downstream inspection.
+- Add more examples showing programmatic embedding and sink composition.
 
-- The runtime can be embedded without going through the CLI.
-- Internal responsibilities are obvious from module boundaries.
+### 4. Documentation Tightening
 
-## Phase 4: Developer Experience
+Goal: keep public docs aligned as the repo matures.
 
-Goal: make the repo pleasant to work on and hard to misuse.
+Candidate work:
 
-Deliverables:
+- Add a short upgrade/migration note pattern to `CHANGELOG.md`.
+- Expand `docs/delivery-contract.md` with sample payloads per sink.
+- Add a concise architecture note for the compile/runtime/sink boundaries.
 
-- Add formatter and linter configuration.
-- Add type-checking to CI.
-- Add fixture-driven golden tests for replay scenarios.
-- Add a small examples section for multiple neutral domains.
-- Add a changelog and contribution notes.
+## Recommended Next Steps
 
-Exit criteria:
-
-- A new contributor can run checks and understand the supported workflow quickly.
-
-## Phase 5: Build The Sink Delivery System
-
-Goal: implement real sink delivery with reliability semantics instead of leaving
-delivery as metadata attached to alerts.
-
-Deliverables:
-
-- Add a first-class sink dispatch layer inside `rule_engine/`.
-- Support sink registration and configuration through explicit typed adapters.
-- Implement at least these concrete sinks:
-  - stdout or console sink
-  - file or NDJSON sink
-  - webhook sink
-  - SQS-style queue sink
-  - object-storage sink
-- Define a delivery contract for each sink:
-  - payload shape
-  - retryable vs terminal errors
-  - timeout handling
-  - idempotency expectations
-  - structured delivery result reporting
-- Add retry policy support with bounded retries and backoff.
-- Add dead-letter or failed-delivery recording for undeliverable events.
-- Add delivery metrics and structured logging around success, failure, latency, and retry counts.
-- Add integration tests for each sink type and failure mode.
-
-Exit criteria:
-
-- Sink definitions in rules execute through real adapters.
-- Delivery failures are observable and classified correctly.
-- The engine can deliver alerts end to end without custom downstream glue code.
-
-## Phase 6: Production Boundary Decisions
-
-Goal: decide what this repo is, and what it is not.
-
-Options:
-
-- Keep it as a reference engine only.
-- Add adapter layers for real inputs and outputs while keeping the core in-memory.
-- Split the core engine from any streaming or infrastructure-specific integration work.
-
-Questions to answer:
-
-- Should cron support remain intentionally narrow, or become more complete?
-- Should rule execution stay replay-based only, or support a live process loop?
-- Which sinks are mandatory for the supported product surface, and which stay optional adapters?
-- Should domain-specific rule packs live here or in separate example repos?
-
-Exit criteria:
-
-- The repo has a clear scope boundary and does not drift back into speculative architecture.
-
-## Priority Order
-
-1. Phase 1: Stabilize the core
-2. Phase 2: Complete the declarative language
-3. Phase 3: Improve runtime structure
-4. Phase 4: Developer experience
-5. Phase 5: Build the sink delivery system
-6. Phase 6: Production boundary decisions
-
-## Immediate Next Steps
-
-1. Add `.gitignore` and clean generated artifacts from the repo.
-2. Add schema-backed validation for YAML rules.
-3. Add failure-mode tests for malformed rules and unsupported expressions.
-4. Audit the YAML surface and remove any fields the runtime will not support.
-5. Design the sink adapter contract before implementing individual sink backends.
+1. Decide whether operational hardening is still in scope for this repo or
+   should stay in downstream wrappers.
+2. If yes, implement one concrete hardening slice instead of reopening broad
+   architecture: webhook auth examples, dead-letter persistence options, or
+   richer queue transport boundaries.
+3. Keep `README.md`, `ROADMAP.md`, and `docs/scope-boundary.md` aligned whenever
+   that choice changes.

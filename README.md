@@ -28,6 +28,7 @@ extended toward a fully implemented sink delivery system.
 - Sink dispatch now supports bounded retries, configurable backoff, dead-letter recording, delivery metrics snapshots, and structured delivery logs.
 - Delivery observability now covers overall and per-sink counts, retry activity, unsupported routes, dead letters, and measured delivery latency.
 - End-to-end integration tests now exercise file, queue, object-storage, and webhook sink paths, including retry/dead-letter behavior.
+- Embedders can now create standard sink registries through helper constructors instead of manual adapter wiring.
 - Replay execution can now return a typed delivery report, and the CLI can emit alerts plus delivery telemetry as JSON.
 - Scope boundaries are now explicit: replay-first execution, narrow cron support, five maintained sink adapters, and no domain-specific rule packs in-repo.
 
@@ -176,6 +177,17 @@ alerts = result.alerts
 metadata = embedded.rule_metadata()
 ```
 
+Create a standard sink registry for embedding without hand-wiring each adapter:
+
+```python
+from rule_engine import build_engine_from_yaml, create_sink_registry
+
+sink_registry = create_sink_registry(
+    dead_letter_path="output/dead_letters.ndjson",
+)
+embedded = build_engine_from_yaml([yaml_text], sink_registry=sink_registry)
+```
+
 ## Supported Language
 
 The exact supported declarative subset is documented in
@@ -211,9 +223,10 @@ This repository is organized around a single canonical runtime model. The
 runtime package is generic and can be reused for domains that fit the same
 event-and-timer evaluation model.
 
-The current development target is no longer just a reference runtime. The end
-goal is a production-capable core with a fully implemented sink delivery
-system. The detailed plan for that work lives in `ROADMAP.md`.
+The initial core build-out is complete: the repo now has the replay runtime,
+typed sink system, delivery contract, integration coverage, and explicit scope
+boundaries it set out to establish. `ROADMAP.md` now tracks the remaining
+post-core backlog rather than the original construction phases.
 
 The explicit scope decisions for that target now live in
 `docs/scope-boundary.md`.

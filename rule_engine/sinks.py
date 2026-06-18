@@ -452,6 +452,59 @@ class SinkAdapter(Protocol):
     def deliver(self, request: DeliveryRequest) -> DeliveryResult: ...
 
 
+def default_sink_adapters(
+    *,
+    include_stdout: bool = True,
+    include_file: bool = True,
+    include_webhook: bool = True,
+    include_queue: bool = True,
+    include_object_storage: bool = True,
+    queue_transport: QueueTransport | None = None,
+    object_storage_transport: ObjectStorageTransport | None = None,
+) -> List[SinkAdapter]:
+    adapters: List[SinkAdapter] = []
+    if include_stdout:
+        adapters.append(StdoutSink())
+    if include_file:
+        adapters.append(FileSink())
+    if include_webhook:
+        adapters.append(WebhookSink())
+    if include_queue:
+        adapters.append(QueueSink(transport=queue_transport))
+    if include_object_storage:
+        adapters.append(ObjectStorageSink(transport=object_storage_transport))
+    return adapters
+
+
+def create_sink_registry(
+    *,
+    include_stdout: bool = True,
+    include_file: bool = True,
+    include_webhook: bool = True,
+    include_queue: bool = True,
+    include_object_storage: bool = True,
+    queue_transport: QueueTransport | None = None,
+    object_storage_transport: ObjectStorageTransport | None = None,
+    dead_letter_store: DeadLetterStore | None = None,
+    dead_letter_path: str | Path | None = None,
+) -> "SinkRegistry":
+    resolved_dead_letter_store = dead_letter_store
+    if resolved_dead_letter_store is None and dead_letter_path is not None:
+        resolved_dead_letter_store = FileDeadLetterStore(dead_letter_path)
+    return SinkRegistry(
+        adapters=default_sink_adapters(
+            include_stdout=include_stdout,
+            include_file=include_file,
+            include_webhook=include_webhook,
+            include_queue=include_queue,
+            include_object_storage=include_object_storage,
+            queue_transport=queue_transport,
+            object_storage_transport=object_storage_transport,
+        ),
+        dead_letter_store=resolved_dead_letter_store,
+    )
+
+
 class SinkRegistry:
     def __init__(
         self,

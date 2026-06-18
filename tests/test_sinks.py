@@ -27,6 +27,8 @@ from rule_engine.sinks import (
     WebhookSink,
     WebhookSinkConfig,
     build_delivery_payload,
+    create_sink_registry,
+    default_sink_adapters,
     parse_sink_config,
 )
 from rule_engine.types import SensorEvent
@@ -53,6 +55,44 @@ def test_sink_registry_reports_unsupported_sink():
 
     assert result.status == "unsupported"
     assert result.retryable is False
+
+
+def test_default_sink_adapters_builds_expected_adapter_set():
+    adapters = default_sink_adapters(include_stdout=False, include_webhook=False)
+
+    assert [adapter.sink_type for adapter in adapters] == [
+        "file",
+        "queue",
+        "object_storage",
+    ]
+
+
+def test_create_sink_registry_can_configure_dead_letter_path(tmp_path: Path):
+    registry = create_sink_registry(
+        include_stdout=False,
+        include_file=False,
+        include_webhook=False,
+        include_queue=False,
+        include_object_storage=False,
+        dead_letter_path=tmp_path / "dead_letters.ndjson",
+    )
+
+    assert isinstance(registry.dead_letter_store, FileDeadLetterStore)
+
+
+def test_create_sink_registry_can_use_custom_transports(tmp_path: Path):
+    queue_transport = InMemoryQueueTransport()
+    object_transport = FileObjectStorageTransport(root=tmp_path)
+    registry = create_sink_registry(
+        include_stdout=False,
+        include_file=False,
+        include_webhook=False,
+        queue_transport=queue_transport,
+        object_storage_transport=object_transport,
+    )
+
+    assert registry.get("queue") is not None
+    assert registry.get("object_storage") is not None
 
 
 def test_retry_policy_defaults_to_single_attempt():

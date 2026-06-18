@@ -53,6 +53,8 @@ from .sinks import (
     WebhookSink,
     WebhookSinkConfig,
     coerce_sink_config,
+    create_sink_registry,
+    default_sink_adapters,
     parse_sink_config,
 )
 from .types import Alert, RuleContext, SensorEvent, StoreRecord
@@ -62,6 +64,7 @@ __all__ = [
     "Alert",
     "AnySinkConfig",
     "CompiledEngine",
+    "create_sink_registry",
     "DeadLetterRecord",
     "DeadLetterStore",
     "DeliveryRequest",
@@ -78,6 +81,7 @@ __all__ = [
     "FileSink",
     "FileSinkConfig",
     "FileObjectStorageTransport",
+    "default_sink_adapters",
     "GenericSinkConfig",
     "InMemoryDeadLetterStore",
     "InMemoryQueueTransport",
