@@ -49,6 +49,7 @@ extended toward a fully implemented sink delivery system.
 - `docs/architecture.svg` — public-facing architecture diagram for repo pages and social sharing.
 - `docs/architecture-notes.md` — compile/runtime/sink boundary notes mapped to the actual modules.
 - `docs/delivery-contract.md` — executable delivery envelope and sink-specific semantics.
+- `docs/embedding-examples.md` — focused Python embedding patterns for compiled rules, sink setup, and report inspection.
 - `docs/scope-boundary.md` — explicit repo scope decisions and out-of-scope lines.
 - `docs/rule-language.md` — exact supported declarative rule-language subset.
 - `docs/linkedin-project-kit.md` — reusable LinkedIn project copy, post text, and publishing checklist.
@@ -191,6 +192,8 @@ sink_registry = create_sink_registry(
 )
 embedded = build_engine_from_yaml([yaml_text], sink_registry=sink_registry)
 ```
+
+For a fuller set of Python embedding patterns, see `docs/embedding-examples.md`.
 
 ## Supported Language
 

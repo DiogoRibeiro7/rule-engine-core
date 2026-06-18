@@ -42,6 +42,7 @@ Build a small, trustworthy declarative rule engine that:
 - Webhook delivery now supports explicit auth-header and HMAC-signing configuration.
 - The compile/runtime/sink architecture boundaries are now documented explicitly in-repo.
 - Typed delivery reports now expose convenience query helpers for downstream inspection.
+- The repo now includes focused Python embedding examples for compiled rules, sink setup, and report inspection.
 
 ## Completed Foundations
 
@@ -93,8 +94,6 @@ runtime.
 
 Candidate work:
 
-- Add helper constructors for common sink-registry setups.
-- Add richer typed report/query helpers for downstream inspection.
 - Add more examples showing programmatic embedding and sink composition.
 
 ### 4. Documentation Tightening
