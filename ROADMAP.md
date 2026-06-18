@@ -45,6 +45,7 @@ Build a small, trustworthy declarative rule engine that:
 - The repo now includes focused Python embedding examples for compiled rules, sink setup, and report inspection.
 - Typed delivery metrics snapshots, replay reports, and evaluation results now expose structured export helpers for downstream embedding code.
 - File-backed dead-letter storage now supports optional bounded retention and stronger local persistence semantics, with explicit retention guidance in the docs.
+- Sink failure paths now preserve consistent route and contract metadata across file, queue, object-storage, and webhook adapters, with tighter negative-path coverage.
 
 ## Completed Foundations
 
@@ -70,8 +71,6 @@ Candidate work:
 
 - Add explicit delivery timeout coverage for file/object-storage paths where it
   makes sense.
-- Add more failure-mode coverage around partial transport exceptions and adapter
-  metadata consistency.
 
 ### 2. Backend Depth
 

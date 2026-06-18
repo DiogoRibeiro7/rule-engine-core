@@ -184,6 +184,15 @@ For implemented sinks, `metadata` now includes at least:
 Concrete sinks may add extra fields such as `path`, `status_code`, `queue`,
 `bucket`, `key`, or transport-returned identifiers.
 
+Failure-path consistency notes:
+
+- File sink failures retain `path` plus the shared contract metadata.
+- Queue sink failures retain `queue` plus the shared contract metadata.
+- Object-storage failures retain `bucket` and computed `key` plus the shared
+  contract metadata.
+- Webhook failures retain `url` and, when available, `status_code` plus the
+  shared contract metadata.
+
 Example failure metadata for a retryable webhook error:
 
 ```json

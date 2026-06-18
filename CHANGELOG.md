@@ -42,6 +42,8 @@ Suggested `Upgrade Notes` format:
   and structured delivery logs.
 - File-backed dead-letter retention and stronger local persistence options for
   embedding code.
+- Consistent sink failure metadata across file, queue, object-storage, and
+  webhook delivery paths.
 - Formatter, linter, and type-checking configuration enforced in CI.
 - Golden replay fixtures for sample scenarios.
 - Neutral multi-domain examples with checked-in sample rules and event data.

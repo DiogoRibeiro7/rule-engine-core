@@ -761,6 +761,61 @@ def test_file_sink_writes_ndjson_record(tmp_path: Path):
     assert "idempotency_key" in result.metadata
 
 
+def test_file_sink_returns_failed_result_with_metadata_on_write_error(tmp_path: Path):
+    target = tmp_path / "alerts.ndjson"
+    sink = FileSink()
+
+    with patch("pathlib.Path.open", side_effect=OSError("disk full")):
+        result = sink.deliver(
+            DeliveryRequest(
+                sink_type="file",
+                rule_id="rule-1",
+                entity_id="entity-1",
+                severity="warning",
+                message="persisted",
+                timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+                payload={"k": "v"},
+                config={"type": "file", "path": str(target)},
+            )
+        )
+
+    assert result.status == "failed"
+    assert result.retryable is False
+    assert result.metadata["contract_version"] == "rule-engine-core.v1"
+    assert result.metadata["path"] == str(target)
+    assert "idempotency_key" in result.metadata
+
+
+def test_sink_registry_records_file_sink_write_failure(tmp_path: Path):
+    target = tmp_path / "alerts.ndjson"
+    dead_letters = InMemoryDeadLetterStore()
+    registry = SinkRegistry(adapters=[FileSink()], dead_letter_store=dead_letters)
+
+    with patch("pathlib.Path.open", side_effect=OSError("disk full")):
+        result = registry.deliver(
+            DeliveryRequest(
+                sink_type="file",
+                rule_id="rule-1",
+                entity_id="entity-1",
+                severity="warning",
+                message="persisted",
+                timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+                payload={"k": "v"},
+                config={"type": "file", "path": str(target)},
+            )
+        )
+
+    snapshot = registry.metrics()
+    log = registry.delivery_log()
+
+    assert result.status == "failed"
+    assert snapshot.by_sink["file"].failed == 1
+    assert snapshot.by_sink["file"].dead_letters == 1
+    assert len(dead_letters.records) == 1
+    assert log[0].sink_type == "file"
+    assert log[0].dead_lettered is True
+
+
 def test_engine_records_delivery_results_for_stdout_sink():
     yaml_text = """
 rule_id: source_primary_spike
@@ -978,6 +1033,32 @@ def test_queue_sink_marks_timeout_as_retryable():
     assert result.retryable is True
 
 
+def test_queue_sink_failure_keeps_metadata_consistent():
+    class BrokenTransport:
+        def send(self, queue, payload, config):
+            raise RuntimeError("queue exploded")
+
+    sink = QueueSink(transport=BrokenTransport())
+    result = sink.deliver(
+        DeliveryRequest(
+            sink_type="queue",
+            rule_id="rule-1",
+            entity_id="entity-1",
+            severity="warning",
+            message="queued",
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            payload={},
+            config={"type": "queue", "queue": "alerts", "retryable": True},
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.retryable is True
+    assert result.metadata["contract_version"] == "rule-engine-core.v1"
+    assert result.metadata["queue"] == "alerts"
+    assert "idempotency_key" in result.metadata
+
+
 def test_engine_records_delivery_results_for_queue_sink():
     yaml_text = """
 rule_id: source_primary_spike
@@ -1086,6 +1167,38 @@ def test_object_storage_sink_marks_timeout_as_retryable():
 
     assert result.status == "failed"
     assert result.retryable is True
+
+
+def test_object_storage_sink_failure_keeps_metadata_consistent():
+    class BrokenTransport:
+        def put_object(self, bucket, key, body, config):
+            raise RuntimeError("object store exploded")
+
+    sink = ObjectStorageSink(transport=BrokenTransport())
+    result = sink.deliver(
+        DeliveryRequest(
+            sink_type="object_storage",
+            rule_id="rule-1",
+            entity_id="entity-1",
+            severity="warning",
+            message="stored",
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            payload={},
+            config={
+                "type": "object_storage",
+                "bucket": "archive",
+                "prefix": "alerts",
+                "retryable": True,
+            },
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.retryable is True
+    assert result.metadata["contract_version"] == "rule-engine-core.v1"
+    assert result.metadata["bucket"] == "archive"
+    assert result.metadata["key"].startswith("alerts/rule-1-")
+    assert "idempotency_key" in result.metadata
 
 
 def test_engine_records_delivery_results_for_object_storage_sink(tmp_path: Path):

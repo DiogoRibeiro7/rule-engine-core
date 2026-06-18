@@ -33,6 +33,7 @@ extended toward a fully implemented sink delivery system.
 - File-backed dead-letter storage now supports optional bounded retention and fsync-oriented persistence for stronger local fallback handling.
 - Typed delivery reports now include convenience query helpers for per-sink metrics, failed entries, and dead-letter inspection.
 - Typed delivery metrics snapshots and evaluation results now expose structured `to_dict()`/`to_json()` exports for downstream embedding code.
+- Failure paths across file, queue, object-storage, and webhook sinks now preserve consistent delivery metadata for downstream logging and dead-letter handling.
 - Replay execution can now return a typed delivery report, and the CLI can emit alerts plus delivery telemetry as JSON.
 - Scope boundaries are now explicit: replay-first execution, narrow cron support, five maintained sink adapters, and no domain-specific rule packs in-repo.
 
@@ -82,6 +83,7 @@ What this repo is:
 - a versioned delivery envelope with a deterministic idempotency key for implemented sinks
 - a replay/report surface for downstream tooling and automation
 - structured export helpers for typed delivery metrics, reports, and evaluation results
+- consistent sink failure metadata for downstream inspection and persistence
 - a type-checked core package with CI enforcement
 
 What this repo is not yet:

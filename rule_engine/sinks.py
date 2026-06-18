@@ -834,14 +834,22 @@ class FileSink:
         path = Path(config.path)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = build_delivery_payload(request)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(payload.to_json() + "\n")
-        return DeliveryResult(
-            sink_type=self.sink_type,
-            status="delivered",
-            detail="Delivered to file",
-            metadata=_payload_metadata(payload, path=str(path)),
-        )
+        try:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(payload.to_json() + "\n")
+            return DeliveryResult(
+                sink_type=self.sink_type,
+                status="delivered",
+                detail="Delivered to file",
+                metadata=_payload_metadata(payload, path=str(path)),
+            )
+        except OSError as exc:
+            return DeliveryResult(
+                sink_type=self.sink_type,
+                status="failed",
+                detail=f"File delivery failed: {exc}",
+                metadata=_payload_metadata(payload, path=str(path)),
+            )
 
 
 class WebhookSink:
@@ -899,7 +907,7 @@ class WebhookSink:
                     url=config.url,
                 ),
             )
-        except (error.URLError, TimeoutError, socket.timeout) as exc:
+        except (error.URLError, TimeoutError, socket.timeout, OSError) as exc:
             return DeliveryResult(
                 sink_type=self.sink_type,
                 status="failed",
