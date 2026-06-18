@@ -204,7 +204,8 @@ The exact supported declarative subset is documented in
 
 The implemented sink delivery contract lives in `docs/delivery-contract.md`.
 That file defines the shared payload envelope, retryability expectations, and
-sink-specific semantics for the currently supported adapters.
+sink-specific semantics for the currently supported adapters, including
+concrete payload and metadata examples.
 
 ## Examples
 

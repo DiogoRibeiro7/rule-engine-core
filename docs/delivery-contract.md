@@ -21,6 +21,40 @@ Fields:
 - `timestamp` — ISO-8601 UTC timestamp string
 - `payload` — alert metadata/context payload produced by the runtime
 
+Example envelope:
+
+```json
+{
+  "contract_version": "rule-engine-core.v1",
+  "sink_type": "queue",
+  "idempotency_key": "8f2fbf9c6208c2786fb365b5b2f5f5c7fd8af2e0b3f8f98b42bc7dd6d4d5f5fd",
+  "entity_id": "entity-1",
+  "rule_id": "source_primary_spike",
+  "severity": "critical",
+  "message": "Primary source spike for entity-1: 185.0",
+  "timestamp": "2024-01-01T00:00:00+00:00",
+  "payload": {
+    "rule_id": "source_primary_spike",
+    "entity_id": "entity-1",
+    "sinks": [
+      {
+        "type": "queue",
+        "queue": "alerts"
+      }
+    ],
+    "variables": {
+      "entity_id": "entity-1",
+      "rule_id": "source_primary_spike",
+      "sensor_type": "source_primary",
+      "value": 185.0,
+      "timestamp_ms": 1704067200000,
+      "timestamp": "2024-01-01T00:00:00+00:00",
+      "duration": "0:00:00"
+    }
+  }
+}
+```
+
 ## Sink Semantics
 
 ### `stdout`
@@ -37,6 +71,25 @@ Fields:
 - Idempotency expectation: caller chooses file path and downstream handling
 - Failure model: terminal on invalid path or write error
 
+Example line written to disk:
+
+```json
+{
+  "contract_version": "rule-engine-core.v1",
+  "sink_type": "file",
+  "idempotency_key": "f7d28d9baf8b8d462b4d2955447b61cb1a1ca42ef1d4d8f06b8c94ce1c5909ab",
+  "entity_id": "entity-1",
+  "rule_id": "source_primary_spike",
+  "severity": "critical",
+  "message": "Primary source spike for entity-1: 185.0",
+  "timestamp": "2024-01-01T00:00:00+00:00",
+  "payload": {
+    "rule_id": "source_primary_spike",
+    "entity_id": "entity-1"
+  }
+}
+```
+
 ### `webhook`
 
 - Output shape: JSON envelope as HTTP request body
@@ -46,6 +99,17 @@ Fields:
 - Failure model:
   - HTTP `5xx`, transport errors, and socket timeouts are retryable
   - HTTP `4xx` is terminal
+
+Success metadata example:
+
+```json
+{
+  "contract_version": "rule-engine-core.v1",
+  "idempotency_key": "8f2fbf9c6208c2786fb365b5b2f5f5c7fd8af2e0b3f8f98b42bc7dd6d4d5f5fd",
+  "status_code": 202,
+  "url": "https://example.test/hook"
+}
+```
 
 ### `queue`
 
@@ -57,6 +121,17 @@ Fields:
   - `TimeoutError` is retryable
   - other exceptions are retryable only when `retryable: true` is configured
 
+Success metadata example:
+
+```json
+{
+  "contract_version": "rule-engine-core.v1",
+  "idempotency_key": "8f2fbf9c6208c2786fb365b5b2f5f5c7fd8af2e0b3f8f98b42bc7dd6d4d5f5fd",
+  "queue": "alerts",
+  "message_id": "1"
+}
+```
+
 ### `object_storage`
 
 - Output shape: one JSON envelope per stored object
@@ -66,6 +141,18 @@ Fields:
 - Failure model:
   - `TimeoutError` is retryable
   - other exceptions are retryable only when `retryable: true` is configured
+
+Success metadata example:
+
+```json
+{
+  "contract_version": "rule-engine-core.v1",
+  "idempotency_key": "8f2fbf9c6208c2786fb365b5b2f5f5c7fd8af2e0b3f8f98b42bc7dd6d4d5f5fd",
+  "bucket": "archive",
+  "key": "alerts/source_primary_spike-20240101T000000Z.jsonl",
+  "path": ".object_store/archive/alerts/source_primary_spike-20240101T000000Z.jsonl"
+}
+```
 
 ## Delivery Results
 
@@ -83,3 +170,20 @@ For implemented sinks, `metadata` now includes at least:
 
 Concrete sinks may add extra fields such as `path`, `status_code`, `queue`,
 `bucket`, `key`, or transport-returned identifiers.
+
+Example failure metadata for a retryable webhook error:
+
+```json
+{
+  "contract_version": "rule-engine-core.v1",
+  "idempotency_key": "8f2fbf9c6208c2786fb365b5b2f5f5c7fd8af2e0b3f8f98b42bc7dd6d4d5f5fd",
+  "url": "https://example.test/hook",
+  "attempt_latency_ms": 12.4,
+  "total_latency_ms": 24.8,
+  "attempt": 2,
+  "max_attempts": 2,
+  "backoff_schedule_s": [
+    0.25
+  ]
+}
+```
