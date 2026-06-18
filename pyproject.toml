@@ -11,7 +11,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6.0"]
+dev = ["pytest>=8.0", "ruff>=0.6.0", "mypy>=1.11.0"]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
@@ -36,3 +36,11 @@ select = [
 quote-style = "double"
 indent-style = "space"
 line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.11"
+files = ["rule_engine"]
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+no_implicit_optional = true

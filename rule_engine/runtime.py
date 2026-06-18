@@ -28,6 +28,8 @@ _TEMPLATE_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
 _TRIGGER_TYPES = {"event", "window", "absence", "composite", "scheduled"}
 _CONDITION_OPERATORS = {"AND", "OR"}
 _COMPARISON_OPERATORS = {"eq", "ne", "gt", "gte", "lt", "lte"}
+NumericSeries = List[float]
+BucketedNumericSeries = List[NumericSeries]
 
 
 def parse_duration(value: Optional[str]) -> Optional[timedelta]:
@@ -382,15 +384,14 @@ def _evaluate_aggregation(
     window: EntityWindow,
     outputs: Dict[str, Any],
 ) -> Any:
-    if aggregation.field is not None:
-        source_values = [float(getattr(event, aggregation.field)) for event in window.events]
-    elif aggregation.input is not None:
-        source_values = outputs[aggregation.input]
-    else:
-        raise ValueError(f"Aggregation {aggregation.agg_id} requires field or input")
+    function = aggregation.function
 
-    if aggregation.sub_window is not None and aggregation.field is not None:
-        source_values = [
+    if aggregation.sub_window is not None:
+        if aggregation.field is None:
+            raise ValueError(
+                f"Aggregation {aggregation.agg_id} sub_window requires a source field"
+            )
+        bucketed_values: BucketedNumericSeries = [
             bucket
             for bucket in _chunk_values(
                 window.events,
@@ -401,79 +402,92 @@ def _evaluate_aggregation(
             )
             if bucket
         ]
+        if function == "count":
+            return [len(bucket) for bucket in bucketed_values]
+        if function == "sum":
+            return [sum(bucket) for bucket in bucketed_values]
+        if function == "mean":
+            return [mean(bucket) for bucket in bucketed_values]
+        if function == "min":
+            return [min(bucket) for bucket in bucketed_values]
+        if function == "max":
+            return [max(bucket) for bucket in bucketed_values]
+        if function == "stddev":
+            return [pstdev(bucket) if len(bucket) > 1 else 0.0 for bucket in bucketed_values]
+        if function == "delta":
+            return [bucket[-1] - bucket[0] for bucket in bucketed_values]
+        if function == "rate":
+            duration_seconds = aggregation.sub_window.total_seconds()
+            return [value / duration_seconds for value in _bucketed_delta(bucketed_values)]
+        if function == "percentile":
+            percentile = aggregation.percentile if aggregation.percentile is not None else 95.0
+            return [_percentile(bucket, percentile) for bucket in bucketed_values]
+        raise ValueError(f"Unsupported aggregation function: {function}")
 
-    function = aggregation.function
+    if aggregation.field is not None:
+        source_values: NumericSeries = [
+            float(getattr(event, aggregation.field)) for event in window.events
+        ]
+    elif aggregation.input is not None:
+        source_values = [float(value) for value in outputs[aggregation.input]]
+    else:
+        raise ValueError(f"Aggregation {aggregation.agg_id} requires field or input")
+
     if function == "count":
-        if aggregation.sub_window is not None:
-            return [len(bucket) for bucket in source_values]
         return len(source_values)
     if function == "sum":
-        return (
-            [sum(bucket) for bucket in source_values]
-            if aggregation.sub_window
-            else sum(source_values)
-        )
+        return sum(source_values)
     if function == "mean":
-        if aggregation.sub_window is not None:
-            return [mean(bucket) for bucket in source_values]
         return mean(source_values) if source_values else None
     if function == "min":
-        if aggregation.sub_window is not None:
-            return [min(bucket) for bucket in source_values]
         return min(source_values) if source_values else None
     if function == "max":
-        if aggregation.sub_window is not None:
-            return [max(bucket) for bucket in source_values]
         return max(source_values) if source_values else None
     if function == "stddev":
-        if aggregation.sub_window is not None:
-            return [pstdev(bucket) if len(bucket) > 1 else 0.0 for bucket in source_values]
         if not source_values:
             return None
         return pstdev(source_values) if len(source_values) > 1 else 0.0
     if function == "delta":
         if not source_values:
             return None
-        if aggregation.sub_window is not None:
-            return [bucket[-1] - bucket[0] for bucket in source_values]
         return source_values[-1] - source_values[0]
     if function == "rate":
-        delta = _evaluate_aggregation(
-            Aggregation(
-                aggregation.agg_id, "delta", field=aggregation.field, input=aggregation.input
-            ),
-            window,
-            outputs,
-        )
+        delta = _scalar_delta(source_values)
         if delta is None:
             return None
         duration_seconds = window.duration.total_seconds()
-        if aggregation.sub_window is not None:
-            return [value / aggregation.sub_window.total_seconds() for value in delta]
         return delta / duration_seconds if duration_seconds else None
     if function == "percentile":
         if not source_values:
             return None
         percentile = aggregation.percentile if aggregation.percentile is not None else 95.0
-        if aggregation.sub_window is not None:
-            return [_percentile(bucket, percentile) for bucket in source_values]
         return _percentile(source_values, percentile)
     raise ValueError(f"Unsupported aggregation function: {function}")
 
 
+def _scalar_delta(values: NumericSeries) -> Optional[float]:
+    if not values:
+        return None
+    return values[-1] - values[0]
+
+
+def _bucketed_delta(values: BucketedNumericSeries) -> NumericSeries:
+    return [bucket[-1] - bucket[0] for bucket in values]
+
+
 def _compare(left: Any, operator: str, right: Any) -> bool:
     if operator == "eq":
-        return left == right
+        return bool(left == right)
     if operator == "ne":
-        return left != right
+        return bool(left != right)
     if operator == "gt":
-        return left > right
+        return bool(left > right)
     if operator == "gte":
-        return left >= right
+        return bool(left >= right)
     if operator == "lt":
-        return left < right
+        return bool(left < right)
     if operator == "lte":
-        return left <= right
+        return bool(left <= right)
     raise ValueError(f"Unsupported operator: {operator}")
 
 

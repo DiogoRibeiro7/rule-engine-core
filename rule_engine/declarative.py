@@ -369,7 +369,7 @@ def _load_sources(data: Any) -> List[Source]:
     ]
 
 
-def _load_condition(data: Dict[str, Any]) -> Condition:
+def _load_condition(data: Optional[Dict[str, Any]]) -> Condition:
     if data is None:
         return Condition()
     return Condition(
@@ -396,7 +396,7 @@ def _load_actions(rule_id: str, data: List[Dict[str, Any]]) -> List[Action]:
 
 def _infer_trigger(document: Dict[str, Any]) -> Dict[str, Any]:
     trigger = document.get("trigger")
-    if trigger is not None:
+    if isinstance(trigger, dict):
         return trigger
 
     sources = document.get("sources") or document.get("source")
@@ -405,8 +405,10 @@ def _infer_trigger(document: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(sources, dict):
         sources = [sources]
 
-    if len(sources) == 1 and sources[0].get("trigger") is not None:
-        return sources[0]["trigger"]
+    if len(sources) == 1:
+        trigger_config = sources[0].get("trigger")
+        if isinstance(trigger_config, dict):
+            return trigger_config
 
     if len(sources) > 1 and all(
         source.get("trigger", {}).get("type") == "absence" for source in sources

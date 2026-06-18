@@ -5,11 +5,16 @@ from typing import Any, Callable, List, Optional
 
 from .registry import EVENT_RULES, SCHEDULED_RULES, WINDOW_RULES, RuleSpec
 
+RuleFunction = Callable[..., Any]
+RuleDecorator = Callable[[RuleFunction], RuleFunction]
 
-def event_rule(rule_id: str, description: str = "", sinks: Optional[List[Any]] = None):
+
+def event_rule(
+    rule_id: str, description: str = "", sinks: Optional[List[Any]] = None
+) -> RuleDecorator:
     sinks = sinks or []
 
-    def decorator(fn: Callable):
+    def decorator(fn: RuleFunction) -> RuleFunction:
         EVENT_RULES.append(RuleSpec(rule_id=rule_id, description=description, sinks=sinks, fn=fn))
         return fn
 
@@ -22,10 +27,10 @@ def window_rule(
     duration: Optional[timedelta] = None,
     slide: Optional[timedelta] = None,
     sinks: Optional[List[Any]] = None,
-):
+) -> RuleDecorator:
     sinks = sinks or []
 
-    def decorator(fn: Callable):
+    def decorator(fn: RuleFunction) -> RuleFunction:
         WINDOW_RULES.append(
             RuleSpec(
                 rule_id=rule_id,
@@ -48,10 +53,10 @@ def scheduled_rule(
     timezone: str = "UTC",
     lookback: Optional[timedelta] = None,
     sinks: Optional[List[Any]] = None,
-):
+) -> RuleDecorator:
     sinks = sinks or []
 
-    def decorator(fn: Callable):
+    def decorator(fn: RuleFunction) -> RuleFunction:
         SCHEDULED_RULES.append(
             RuleSpec(
                 rule_id=rule_id,
