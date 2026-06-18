@@ -27,6 +27,7 @@ extended toward a fully implemented sink delivery system.
 - Non-stdout sinks now share a single versioned delivery envelope with an explicit idempotency key.
 - Sink dispatch now supports bounded retries, configurable backoff, dead-letter recording, delivery metrics snapshots, and structured delivery logs.
 - Delivery observability now covers overall and per-sink counts, retry activity, unsupported routes, dead letters, and measured delivery latency.
+- End-to-end integration tests now exercise file, queue, object-storage, and webhook sink paths, including retry/dead-letter behavior.
 - Replay execution can now return a typed delivery report, and the CLI can emit alerts plus delivery telemetry as JSON.
 - Sink delivery is still incomplete at the production-integration level; stronger backend integrations and broader policy controls are still pending.
 
@@ -37,6 +38,7 @@ extended toward a fully implemented sink delivery system.
 - `rule_engine/api.py` — lightweight embedding API for building and replaying engines from code.
 - `rule_engine/models.py` — public runtime models for alerts, metadata, evaluation results, and engine config.
 - `tests/` — unit tests for rule semantics and timing behavior.
+- `tests/test_sink_integration.py` — end-to-end sink delivery integration coverage across success and failure paths.
 - `tests/fixtures/replay/` — golden replay cases and expected JSON outputs for sample scenarios.
 - `sample_rules/` — sample declarative rules used as reference fixtures.
 - `sample_data/` — NDJSON fixtures for replay-based tests and demos.
