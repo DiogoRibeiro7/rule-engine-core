@@ -47,6 +47,7 @@ Build a small, trustworthy declarative rule engine that:
 - File-backed dead-letter storage now supports optional bounded retention and stronger local persistence semantics, with explicit retention guidance in the docs.
 - Sink failure paths now preserve consistent route and contract metadata across file, queue, object-storage, and webhook adapters, with tighter negative-path coverage.
 - File and object-storage delivery now support explicit timeout configuration with retryable timeout behavior.
+- The operational-hardening backlog is now complete for the maintained sink surface in this repo.
 
 ## Completed Foundations
 
@@ -67,8 +68,6 @@ The rest of this file captures the remaining backlog after that baseline.
 
 Goal: make the existing sink system safer to operate in less toy-like
 environments without expanding the core into a platform.
-
-Candidate work:
 
 ### 2. Backend Depth
 
@@ -106,10 +105,10 @@ Completed recently:
 
 ## Recommended Next Steps
 
-1. Decide whether operational hardening is still in scope for this repo or
-   should stay in downstream wrappers.
-2. If yes, implement one concrete hardening slice instead of reopening broad
-   architecture: webhook auth examples, dead-letter persistence options, or
-   richer queue transport boundaries.
+1. Stop here if the goal is a small, credible reference core with a complete
+   maintained sink surface and explicit operational boundaries.
+2. Continue only if you want deeper adapter realism rather than broader core
+   correctness: SQS-style queue boundaries, richer object-storage key strategy,
+   or more embedding examples.
 3. Keep `README.md`, `ROADMAP.md`, and `docs/scope-boundary.md` aligned whenever
    that choice changes.
