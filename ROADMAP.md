@@ -20,6 +20,7 @@ Build a small, trustworthy declarative rule engine that:
 - Tests cover core alert behavior and replay timing.
 - The package is now generic; the sample rules are only reference fixtures.
 - Declarative rules now validate against a formal schema before execution.
+- Trigger/duration/cron edge cases now fail fast during compilation.
 - Sink configs now validate against explicit grammar for the implemented sink types.
 - The delivery layer is executable, but production-grade backend breadth and policy depth are still incomplete.
 

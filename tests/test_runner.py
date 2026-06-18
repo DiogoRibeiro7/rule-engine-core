@@ -2,6 +2,8 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from rule_engine.declarative import load_rule_yaml
 from rule_engine.runner import (
     emit_replay_report_json,
@@ -251,3 +253,130 @@ actions:
     assert len(alerts) == 1
     assert alerts[0].timestamp == datetime(2024, 1, 1, 0, 10, tzinfo=UTC)
     assert alerts[0].alert.severity == "warning"
+
+
+def test_window_rule_rejects_zero_duration():
+    yaml_text = """
+rule_id: bad_window
+trigger:
+  type: window
+  duration: 0m
+sources:
+  - sensor_type: source_primary
+    entity_id: "*"
+condition:
+  operator: AND
+actions:
+  - severity: warning
+    message: "bad"
+    sinks: []
+"""
+    with pytest.raises(ValueError, match="Duration must be greater than zero: 0m"):
+        DeclarativeEngine([load_rule_yaml(yaml_text)])
+
+
+def test_window_rule_rejects_slide_longer_than_duration():
+    yaml_text = """
+rule_id: bad_window
+trigger:
+  type: window
+  duration: 5m
+  slide: 10m
+sources:
+  - sensor_type: source_primary
+    entity_id: "*"
+condition:
+  operator: AND
+actions:
+  - severity: warning
+    message: "bad"
+    sinks: []
+"""
+    with pytest.raises(ValueError, match="trigger.slide to be less than or equal to trigger.duration"):
+        DeclarativeEngine([load_rule_yaml(yaml_text)])
+
+
+def test_event_rule_rejects_window_only_trigger_fields():
+    yaml_text = """
+rule_id: bad_event
+trigger:
+  type: event
+  duration: 5m
+sources:
+  - sensor_type: source_primary
+    entity_id: "*"
+condition:
+  operator: AND
+actions:
+  - severity: warning
+    message: "bad"
+    sinks: []
+"""
+    with pytest.raises(ValueError, match="trigger type 'event' does not support fields: duration"):
+        DeclarativeEngine([load_rule_yaml(yaml_text)])
+
+
+def test_scheduled_rule_rejects_out_of_range_cron():
+    yaml_text = """
+rule_id: bad_schedule
+trigger:
+  type: scheduled
+  cron: 61 24 * * *
+sources:
+  - sensor_type: source_primary
+    entity_id: "*"
+condition:
+  operator: AND
+actions:
+  - severity: warning
+    message: "bad"
+    sinks: []
+"""
+    with pytest.raises(ValueError, match="Unsupported cron expression: 61 24 \\* \\* \\*"):
+        DeclarativeEngine([load_rule_yaml(yaml_text)])
+
+
+def test_rule_rejects_unsupported_condition_operator():
+    yaml_text = """
+rule_id: bad_condition
+trigger:
+  type: event
+sources:
+  - sensor_type: source_primary
+    entity_id: "*"
+condition:
+  operator: XOR
+  operands:
+    - metric: value
+      operator: gt
+      value: 180
+actions:
+  - severity: warning
+    message: "bad"
+    sinks: []
+"""
+    with pytest.raises(ValueError, match="unsupported condition operator 'XOR'"):
+        DeclarativeEngine([load_rule_yaml(yaml_text)])
+
+
+def test_rule_rejects_unsupported_operand_operator():
+    yaml_text = """
+rule_id: bad_operand
+trigger:
+  type: event
+sources:
+  - sensor_type: source_primary
+    entity_id: "*"
+condition:
+  operator: AND
+  operands:
+    - metric: value
+      operator: between
+      value: 180
+actions:
+  - severity: warning
+    message: "bad"
+    sinks: []
+"""
+    with pytest.raises(ValueError, match="operand 1 has unsupported operator 'between'"):
+        DeclarativeEngine([load_rule_yaml(yaml_text)])

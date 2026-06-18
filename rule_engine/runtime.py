@@ -21,6 +21,9 @@ from .window import EntityWindow
 
 _DURATION_RE = re.compile(r"^(?P<value>\d+)(?P<unit>[smhd])$")
 _TEMPLATE_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
+_TRIGGER_TYPES = {"event", "window", "absence", "composite", "scheduled"}
+_CONDITION_OPERATORS = {"AND", "OR"}
+_COMPARISON_OPERATORS = {"eq", "ne", "gt", "gte", "lt", "lte"}
 
 
 def parse_duration(value: Optional[str]) -> Optional[timedelta]:
@@ -30,6 +33,8 @@ def parse_duration(value: Optional[str]) -> Optional[timedelta]:
     if match is None:
         raise ValueError(f"Unsupported duration: {value}")
     amount = int(match.group("value"))
+    if amount <= 0:
+        raise ValueError(f"Duration must be greater than zero: {value}")
     unit = match.group("unit")
     if unit == "s":
         return timedelta(seconds=amount)
@@ -92,10 +97,18 @@ class CompiledRule:
             )
 
         trigger_type = rule.trigger.type
+        if trigger_type not in _TRIGGER_TYPES:
+            supported = ", ".join(sorted(_TRIGGER_TYPES))
+            raise ValueError(
+                f"Rule {rule.rule_id} has unsupported trigger type '{trigger_type}'; supported trigger types: {supported}"
+            )
+        _validate_trigger_fields(rule)
         duration = parse_duration(rule.trigger.duration)
         slide = parse_duration(rule.trigger.slide) or duration
         timeout = parse_duration(rule.trigger.timeout)
         lookback = parse_duration(rule.trigger.lookback) if trigger_type == "scheduled" else None
+        if rule.trigger.cron:
+            _parse_cron(rule.trigger.cron)
 
         aggregations = [
             Aggregation(
@@ -117,12 +130,17 @@ class CompiledRule:
             )
             for operand in rule.condition.operands
         ]
+        _validate_condition(rule.rule_id, rule.condition.operator, operands)
 
         if trigger_type == "window":
             if duration is None:
                 raise ValueError(f"Window rule {rule.rule_id} requires trigger.duration")
             if slide is None:
                 slide = duration
+            if slide > duration:
+                raise ValueError(
+                    f"Window rule {rule.rule_id} requires trigger.slide to be less than or equal to trigger.duration"
+                )
         if trigger_type == "absence":
             if timeout is None and rule.sources[0].trigger is not None:
                 timeout = parse_duration(rule.sources[0].trigger.timeout)
@@ -236,7 +254,81 @@ def _parse_cron(cron: str) -> tuple[int, int]:
         raise ValueError(f"Unsupported cron expression: {cron}")
     if not minute.isdigit() or not hour.isdigit():
         raise ValueError(f"Unsupported cron expression: {cron}")
-    return int(hour), int(minute)
+    minute_value = int(minute)
+    hour_value = int(hour)
+    if minute_value not in range(0, 60) or hour_value not in range(0, 24):
+        raise ValueError(f"Unsupported cron expression: {cron}")
+    return hour_value, minute_value
+
+
+def _validate_trigger_fields(rule: DeclarativeRule) -> None:
+    trigger_type = rule.trigger.type
+    disallowed_by_trigger = {
+        "event": {
+            "duration": rule.trigger.duration,
+            "slide": rule.trigger.slide,
+            "timeout": rule.trigger.timeout,
+            "cron": rule.trigger.cron,
+            "lookback": rule.trigger.lookback,
+        },
+        "window": {
+            "timeout": rule.trigger.timeout,
+            "cron": rule.trigger.cron,
+            "lookback": rule.trigger.lookback,
+        },
+        "absence": {
+            "duration": rule.trigger.duration,
+            "slide": rule.trigger.slide,
+            "cron": rule.trigger.cron,
+            "lookback": rule.trigger.lookback,
+        },
+        "composite": {
+            "duration": rule.trigger.duration,
+            "slide": rule.trigger.slide,
+            "timeout": rule.trigger.timeout,
+            "cron": rule.trigger.cron,
+            "lookback": rule.trigger.lookback,
+        },
+        "scheduled": {
+            "duration": rule.trigger.duration,
+            "slide": rule.trigger.slide,
+            "timeout": rule.trigger.timeout,
+        },
+    }
+    invalid_fields = [
+        field_name
+        for field_name, field_value in disallowed_by_trigger.get(trigger_type, {}).items()
+        if field_value is not None
+    ]
+    if invalid_fields:
+        field_list = ", ".join(sorted(invalid_fields))
+        raise ValueError(
+            f"Rule {rule.rule_id} trigger type '{trigger_type}' does not support fields: {field_list}"
+        )
+
+
+def _validate_condition(
+    rule_id: str,
+    operator: Optional[str],
+    operands: List[Operand],
+) -> None:
+    if operator is not None and operator not in _CONDITION_OPERATORS:
+        supported = ", ".join(sorted(_CONDITION_OPERATORS))
+        raise ValueError(
+            f"Rule {rule_id} has unsupported condition operator '{operator}'; supported condition operators: {supported}"
+        )
+    for index, operand in enumerate(operands, start=1):
+        if operand.const is not None:
+            continue
+        if operand.metric is None or operand.operator is None:
+            raise ValueError(
+                f"Rule {rule_id} operand {index} requires metric and operator"
+            )
+        if operand.operator not in _COMPARISON_OPERATORS:
+            supported = ", ".join(sorted(_COMPARISON_OPERATORS))
+            raise ValueError(
+                f"Rule {rule_id} operand {index} has unsupported operator '{operand.operator}'; supported operators: {supported}"
+            )
 
 
 def _next_cron_fire(after: datetime, cron: str) -> datetime:

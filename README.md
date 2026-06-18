@@ -12,6 +12,7 @@ extended toward a fully implemented sink delivery system.
 - Entities are keyed by caller-supplied identifiers, with `rule_id` used as the per-rule namespace.
 - Declarative rules now compile into executable in-memory runtime objects.
 - Declarative rules are schema-validated at load time with path-aware errors for malformed YAML and bad field shapes.
+- Trigger fields, condition operators, duration values, and cron expressions are validated before execution.
 - Replay evaluation supports `event`, `window`, `absence`, `composite`, and `scheduled` triggers.
 - Unit tests assert alert behavior, timer expiry, and lookback handling.
 - A first-class sink contract now exists, with `stdout`, file, webhook, queue, and object-storage sinks implemented.
@@ -42,6 +43,7 @@ What this repo is:
 - the base for sink delivery adapters, with `stdout`, file, webhook, queue, and object-storage support already present
 - an explicit sink configuration grammar with canonical sink names
 - a formal declarative rule schema with fail-fast load-time validation
+- compile-time validation for trigger semantics, durations, cron syntax, and condition grammar edges
 - a delivery layer with retry, backoff, dead-letter, delivery-metrics, and structured-delivery-log primitives
 - a replay/report surface for downstream tooling and automation
 
