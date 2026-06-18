@@ -39,6 +39,7 @@ Build a small, trustworthy declarative rule engine that:
 - Integration tests now cover the implemented sink adapters across success, retry, and dead-letter paths.
 - The repo now has explicit production-boundary decisions for cron scope, replay-first execution, maintained sink surface, and generic-only examples.
 - Common sink-registry setup is now exposed through helper constructors for embedding code.
+- The compile/runtime/sink architecture boundaries are now documented explicitly in-repo.
 
 ## Completed Foundations
 
@@ -102,7 +103,6 @@ Candidate work:
 
 - Add a short upgrade/migration note pattern to `CHANGELOG.md`.
 - Expand `docs/delivery-contract.md` with sample payloads per sink.
-- Add a concise architecture note for the compile/runtime/sink boundaries.
 
 ## Recommended Next Steps
 

@@ -45,6 +45,7 @@ extended toward a fully implemented sink delivery system.
 - `sample_data/` — NDJSON fixtures for replay-based tests and demos.
 - `docs/examples.md` — small multi-domain examples that show how the same engine shape is reused.
 - `docs/architecture.svg` — public-facing architecture diagram for repo pages and social sharing.
+- `docs/architecture-notes.md` — compile/runtime/sink boundary notes mapped to the actual modules.
 - `docs/delivery-contract.md` — executable delivery envelope and sink-specific semantics.
 - `docs/scope-boundary.md` — explicit repo scope decisions and out-of-scope lines.
 - `docs/rule-language.md` — exact supported declarative rule-language subset.
@@ -217,6 +218,9 @@ fixtures under `sample_rules/examples/` and `sample_data/examples/`.
 The repository is public and intended to be linkable as a portfolio project.
 Use `docs/architecture.svg` for visual context and `docs/linkedin-project-kit.md`
 for ready-to-publish LinkedIn project text and post copy.
+
+For the internal compile/runtime/sink boundary explanation, use
+`docs/architecture-notes.md`.
 
 ## Roadmap Alignment
 
