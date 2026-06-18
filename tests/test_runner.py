@@ -14,6 +14,7 @@ from rule_engine.runner import (
     replay_events,
     replay_events_with_report,
 )
+from rule_engine.api import build_engine_from_yaml, build_engine, create_engine
 from rule_engine.compiler import compile_rule, load_and_compile_rule_files
 from rule_engine.runtime import CompiledEngine, DeclarativeEngine, EngineConfig
 from rule_engine.sinks import SinkRegistry, StdoutSink
@@ -278,6 +279,126 @@ actions:
     assert len(alerts) == 1
     assert alerts[0].timestamp == datetime(2024, 1, 1, 8, 0, tzinfo=UTC)
     assert alerts[0].rule_id == "scheduled_source_review"
+
+
+def test_build_engine_from_yaml_returns_embeddable_engine():
+    yaml_text = """
+rule_id: source_primary_spike
+description: Event spike
+trigger:
+  type: event
+sources:
+  - sensor_type: source_primary
+    entity_id: "*"
+condition:
+  operator: AND
+  operands:
+    - metric: value
+      operator: gt
+      value: 180
+actions:
+  - severity: critical
+    message: "Primary source spike for {{entity_id}}: {{value}}"
+    sinks: []
+"""
+    embedded = build_engine_from_yaml([yaml_text])
+
+    alerts = embedded.replay(
+        [
+            SensorEvent(
+                entity_id="entity-1",
+                sensor_type="source_primary",
+                value=185.0,
+                timestamp_ms=_ts(2024, 1, 1, 0, 0),
+            )
+        ]
+    )
+
+    assert len(embedded.compiled_rules) == 1
+    assert len(alerts) == 1
+    assert alerts[0].rule_id == "source_primary_spike"
+
+
+def test_build_engine_uses_explicit_config_and_sink_registry():
+    yaml_text = """
+rule_id: source_primary_spike
+description: Event spike
+trigger:
+  type: event
+sources:
+  - sensor_type: source_primary
+    entity_id: "*"
+condition:
+  operator: AND
+  operands:
+    - metric: value
+      operator: gt
+      value: 180
+actions:
+  - severity: critical
+    message: "Primary source spike for {{entity_id}}: {{value}}"
+    sinks:
+      - type: stdout
+"""
+    sink_registry = SinkRegistry(adapters=[StdoutSink()])
+    embedded = build_engine(
+        [load_rule_yaml(yaml_text)],
+        config=EngineConfig(initial_watermark=datetime(2024, 1, 1, 0, 0, tzinfo=UTC)),
+        sink_registry=sink_registry,
+    )
+
+    alerts = embedded.replay(
+        [
+            SensorEvent(
+                entity_id="entity-1",
+                sensor_type="source_primary",
+                value=185.0,
+                timestamp_ms=_ts(2024, 1, 1, 0, 1),
+            )
+        ]
+    )
+
+    assert embedded.engine.sink_registry is sink_registry
+    assert len(alerts) == 1
+    assert alerts[0].delivery_results[0].status == "delivered"
+
+
+def test_create_engine_wraps_precompiled_rules():
+    yaml_text = """
+rule_id: source_primary_spike
+description: Event spike
+trigger:
+  type: event
+sources:
+  - sensor_type: source_primary
+    entity_id: "*"
+condition:
+  operator: AND
+  operands:
+    - metric: value
+      operator: gt
+      value: 180
+actions:
+  - severity: critical
+    message: "Primary source spike for {{entity_id}}: {{value}}"
+    sinks: []
+"""
+    compiled_rule = compile_rule(load_rule_yaml(yaml_text))
+    embedded = create_engine([compiled_rule])
+
+    alerts = embedded.replay(
+        [
+            SensorEvent(
+                entity_id="entity-1",
+                sensor_type="source_primary",
+                value=185.0,
+                timestamp_ms=_ts(2024, 1, 1, 0, 0),
+            )
+        ]
+    )
+
+    assert embedded.compiled_rules[0].rule_id == "source_primary_spike"
+    assert len(alerts) == 1
 
 
 def test_window_rule_emits_after_window_close():

@@ -28,6 +28,7 @@ extended toward a fully implemented sink delivery system.
 
 - `rule_engine/` — generic Python reference implementation.
 - `rule_engine/compiler.py` — compile-time API for turning declarative rules into executable runtime objects.
+- `rule_engine/api.py` — lightweight embedding API for building and replaying engines from code.
 - `tests/` — unit tests for rule semantics and timing behavior.
 - `sample_rules/` — sample declarative rules used as reference fixtures.
 - `sample_data/` — NDJSON fixtures for replay-based tests and demos.
@@ -45,6 +46,7 @@ What this repo is:
 - a declarative YAML rule compiler/executor
 - a compile/runtime split that supports embedding compiled rules without going through the CLI
 - an explicit engine-configuration surface for runtime startup and scheduling behavior
+- a lightweight embedding API for building engines from YAML, files, or precompiled rules
 - a replay engine for deterministic testing and validation
 - the base for sink delivery adapters, with `stdout`, file, webhook, queue, and object-storage support already present
 - an explicit sink configuration grammar with canonical sink names
@@ -117,6 +119,15 @@ engine = CompiledEngine(
     config=EngineConfig(initial_watermark=start_time),
 )
 alerts = engine.replay(events)
+```
+
+Use the higher-level embedding API when you do not need to manage the compiler directly:
+
+```python
+from rule_engine.api import build_engine_from_yaml
+
+embedded = build_engine_from_yaml([yaml_text])
+alerts = embedded.replay(events)
 ```
 
 ## Supported Language
