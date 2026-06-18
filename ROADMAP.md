@@ -36,7 +36,7 @@ Build a small, trustworthy declarative rule engine that:
 - Sink dispatch now uses explicit typed sink config objects instead of opaque runtime dictionaries.
 - The implemented sinks now share an explicit versioned delivery envelope with a documented idempotency key contract.
 - Integration tests now cover the implemented sink adapters across success, retry, and dead-letter paths.
-- The delivery layer is executable, but production-grade backend breadth and policy depth are still incomplete.
+- The repo now has explicit production-boundary decisions for cron scope, replay-first execution, maintained sink surface, and generic-only examples.
 
 ## Phase 1: Stabilize The Core
 

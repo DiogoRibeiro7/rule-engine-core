@@ -29,7 +29,7 @@ extended toward a fully implemented sink delivery system.
 - Delivery observability now covers overall and per-sink counts, retry activity, unsupported routes, dead letters, and measured delivery latency.
 - End-to-end integration tests now exercise file, queue, object-storage, and webhook sink paths, including retry/dead-letter behavior.
 - Replay execution can now return a typed delivery report, and the CLI can emit alerts plus delivery telemetry as JSON.
-- Sink delivery is still incomplete at the production-integration level; stronger backend integrations and broader policy controls are still pending.
+- Scope boundaries are now explicit: replay-first execution, narrow cron support, five maintained sink adapters, and no domain-specific rule packs in-repo.
 
 ## Repository layout
 
@@ -45,6 +45,7 @@ extended toward a fully implemented sink delivery system.
 - `docs/examples.md` — small multi-domain examples that show how the same engine shape is reused.
 - `docs/architecture.svg` — public-facing architecture diagram for repo pages and social sharing.
 - `docs/delivery-contract.md` — executable delivery envelope and sink-specific semantics.
+- `docs/scope-boundary.md` — explicit repo scope decisions and out-of-scope lines.
 - `docs/rule-language.md` — exact supported declarative rule-language subset.
 - `docs/linkedin-project-kit.md` — reusable LinkedIn project copy, post text, and publishing checklist.
 - `CONTRIBUTING.md` — contributor workflow and repo-specific change rules.
@@ -213,6 +214,9 @@ event-and-timer evaluation model.
 The current development target is no longer just a reference runtime. The end
 goal is a production-capable core with a fully implemented sink delivery
 system. The detailed plan for that work lives in `ROADMAP.md`.
+
+The explicit scope decisions for that target now live in
+`docs/scope-boundary.md`.
 
 ## Project Docs
 
