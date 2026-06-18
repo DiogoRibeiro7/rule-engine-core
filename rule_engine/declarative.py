@@ -15,7 +15,7 @@ _SINK_TYPE_ALIASES = {
 _COMMON_SINK_FIELDS = {"type", "retry"}
 _SINK_ALLOWED_FIELDS = {
     "stdout": set(),
-    "file": {"path"},
+    "file": {"path", "timeout_s"},
     "webhook": {
         "url",
         "timeout_s",
@@ -27,7 +27,7 @@ _SINK_ALLOWED_FIELDS = {
         "signature_header",
     },
     "queue": {"queue", "retryable"},
-    "object_storage": {"bucket", "prefix", "extension", "retryable"},
+    "object_storage": {"bucket", "prefix", "extension", "timeout_s", "retryable"},
 }
 _SINK_REQUIRED_FIELDS = {
     "stdout": set(),

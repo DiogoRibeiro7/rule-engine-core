@@ -44,6 +44,7 @@ Suggested `Upgrade Notes` format:
   embedding code.
 - Consistent sink failure metadata across file, queue, object-storage, and
   webhook delivery paths.
+- Explicit timeout handling for file and object-storage sinks.
 - Formatter, linter, and type-checking configuration enforced in CI.
 - Golden replay fixtures for sample scenarios.
 - Neutral multi-domain examples with checked-in sample rules and event data.

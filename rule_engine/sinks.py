@@ -6,10 +6,12 @@ import json
 import os
 import socket
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Protocol, TypeAlias
+from typing import Any, Callable, Dict, Iterable, List, Protocol, TypeAlias
 from urllib import error, request
 
 
@@ -66,11 +68,19 @@ class StdoutSinkConfig:
 @dataclass(frozen=True)
 class FileSinkConfig:
     path: str
+    timeout_s: float | None = None
     type: str = "file"
     retry: RetryConfig = field(default_factory=RetryConfig)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"type": self.type, "path": self.path, "retry": self.retry.to_dict()}
+        data: Dict[str, Any] = {
+            "type": self.type,
+            "path": self.path,
+            "retry": self.retry.to_dict(),
+        }
+        if self.timeout_s is not None:
+            data["timeout_s"] = self.timeout_s
+        return data
 
 
 @dataclass(frozen=True)
@@ -125,12 +135,13 @@ class ObjectStorageSinkConfig:
     bucket: str
     prefix: str = ""
     extension: str = "jsonl"
+    timeout_s: float | None = None
     retryable: bool = False
     type: str = "object_storage"
     retry: RetryConfig = field(default_factory=RetryConfig)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data: Dict[str, Any] = {
             "type": self.type,
             "bucket": self.bucket,
             "prefix": self.prefix,
@@ -138,6 +149,9 @@ class ObjectStorageSinkConfig:
             "retryable": self.retryable,
             "retry": self.retry.to_dict(),
         }
+        if self.timeout_s is not None:
+            data["timeout_s"] = self.timeout_s
+        return data
 
 
 @dataclass(frozen=True)
@@ -171,7 +185,12 @@ def parse_sink_config(config: Dict[str, Any]) -> AnySinkConfig:
     if sink_type == "stdout":
         return StdoutSinkConfig(retry=retry)
     if sink_type == "file":
-        return FileSinkConfig(path=str(config.get("path", "")), retry=retry)
+        timeout_value = config.get("timeout_s")
+        return FileSinkConfig(
+            path=str(config.get("path", "")),
+            timeout_s=(float(timeout_value) if timeout_value is not None else None),
+            retry=retry,
+        )
     if sink_type == "webhook":
         headers = config.get("headers") or {}
         return WebhookSinkConfig(
@@ -198,10 +217,12 @@ def parse_sink_config(config: Dict[str, Any]) -> AnySinkConfig:
             retry=retry,
         )
     if sink_type == "object_storage":
+        timeout_value = config.get("timeout_s")
         return ObjectStorageSinkConfig(
             bucket=str(config.get("bucket", "")),
             prefix=str(config.get("prefix", "")),
             extension=str(config.get("extension", "jsonl")),
+            timeout_s=(float(timeout_value) if timeout_value is not None else None),
             retryable=bool(config.get("retryable", False)),
             retry=retry,
         )
@@ -384,6 +405,20 @@ def _payload_metadata(payload: DeliveryPayload, **extra: Any) -> Dict[str, Any]:
 def _webhook_signature(secret: str, body: bytes) -> str:
     digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
     return f"sha256={digest}"
+
+
+def _run_with_timeout(timeout_s: float | None, operation: Callable[[], Any]) -> Any:
+    if timeout_s is None:
+        return operation()
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(operation)
+    try:
+        return future.result(timeout=timeout_s)
+    except FutureTimeoutError as exc:
+        future.cancel()
+        raise TimeoutError(f"timed out after {timeout_s} seconds") from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 @dataclass(frozen=True)
@@ -834,13 +869,25 @@ class FileSink:
         path = Path(config.path)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = build_delivery_payload(request)
-        try:
+
+        def write_payload() -> None:
             with path.open("a", encoding="utf-8") as handle:
                 handle.write(payload.to_json() + "\n")
+
+        try:
+            _run_with_timeout(config.timeout_s, write_payload)
             return DeliveryResult(
                 sink_type=self.sink_type,
                 status="delivered",
                 detail="Delivered to file",
+                metadata=_payload_metadata(payload, path=str(path)),
+            )
+        except TimeoutError as exc:
+            return DeliveryResult(
+                sink_type=self.sink_type,
+                status="failed",
+                detail=f"File delivery timed out: {exc}",
+                retryable=True,
                 metadata=_payload_metadata(payload, path=str(path)),
             )
         except OSError as exc:
@@ -1031,7 +1078,10 @@ class ObjectStorageSink:
         payload = build_delivery_payload(req)
         body = payload.to_json()
         try:
-            result = self.transport.put_object(config.bucket, key, body, config.to_dict())
+            result = _run_with_timeout(
+                config.timeout_s,
+                lambda: self.transport.put_object(config.bucket, key, body, config.to_dict()),
+            )
             return DeliveryResult(
                 sink_type=self.sink_type,
                 status="delivered",

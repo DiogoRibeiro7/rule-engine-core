@@ -46,6 +46,7 @@ Build a small, trustworthy declarative rule engine that:
 - Typed delivery metrics snapshots, replay reports, and evaluation results now expose structured export helpers for downstream embedding code.
 - File-backed dead-letter storage now supports optional bounded retention and stronger local persistence semantics, with explicit retention guidance in the docs.
 - Sink failure paths now preserve consistent route and contract metadata across file, queue, object-storage, and webhook adapters, with tighter negative-path coverage.
+- File and object-storage delivery now support explicit timeout configuration with retryable timeout behavior.
 
 ## Completed Foundations
 
@@ -68,9 +69,6 @@ Goal: make the existing sink system safer to operate in less toy-like
 environments without expanding the core into a platform.
 
 Candidate work:
-
-- Add explicit delivery timeout coverage for file/object-storage paths where it
-  makes sense.
 
 ### 2. Backend Depth
 

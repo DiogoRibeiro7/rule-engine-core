@@ -1,4 +1,5 @@
 import json
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -15,9 +16,11 @@ from rule_engine.sinks import (
     FileDeadLetterStore,
     FileObjectStorageTransport,
     FileSink,
+    FileSinkConfig,
     InMemoryDeadLetterStore,
     InMemoryQueueTransport,
     ObjectStorageSink,
+    ObjectStorageSinkConfig,
     QueueSink,
     QueueSinkConfig,
     RetryPolicy,
@@ -167,6 +170,28 @@ def test_parse_sink_config_returns_typed_config():
     assert config.signature_secret == "signing-secret"
     assert config.signature_header == "X-Test-Signature"
     assert config.retry.max_attempts == 3
+
+
+def test_parse_sink_config_returns_file_and_object_storage_timeouts():
+    file_config = parse_sink_config(
+        {
+            "type": "file",
+            "path": "output/alerts.ndjson",
+            "timeout_s": 0.5,
+        }
+    )
+    object_storage_config = parse_sink_config(
+        {
+            "type": "object_storage",
+            "bucket": "archive",
+            "timeout_s": 1.25,
+        }
+    )
+
+    assert isinstance(file_config, FileSinkConfig)
+    assert file_config.timeout_s == 0.5
+    assert isinstance(object_storage_config, ObjectStorageSinkConfig)
+    assert object_storage_config.timeout_s == 1.25
 
 
 def test_build_delivery_payload_defines_stable_contract():
@@ -816,6 +841,64 @@ def test_sink_registry_records_file_sink_write_failure(tmp_path: Path):
     assert log[0].dead_lettered is True
 
 
+def test_file_sink_marks_timeout_as_retryable(tmp_path: Path):
+    target = tmp_path / "alerts.ndjson"
+    sink = FileSink()
+
+    with patch("pathlib.Path.open") as open_mock:
+        open_mock.return_value.__enter__.return_value.write.side_effect = (
+            lambda _: time.sleep(0.05)
+        )
+        result = sink.deliver(
+            DeliveryRequest(
+                sink_type="file",
+                rule_id="rule-1",
+                entity_id="entity-1",
+                severity="warning",
+                message="persisted",
+                timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+                payload={"k": "v"},
+                config={"type": "file", "path": str(target), "timeout_s": 0.01},
+            )
+        )
+
+    assert result.status == "failed"
+    assert result.retryable is True
+    assert result.metadata["path"] == str(target)
+    assert "idempotency_key" in result.metadata
+
+
+def test_sink_registry_records_file_sink_timeout(tmp_path: Path):
+    target = tmp_path / "alerts.ndjson"
+    dead_letters = InMemoryDeadLetterStore()
+    registry = SinkRegistry(adapters=[FileSink()], dead_letter_store=dead_letters)
+
+    with patch("pathlib.Path.open") as open_mock:
+        open_mock.return_value.__enter__.return_value.write.side_effect = (
+            lambda _: time.sleep(0.05)
+        )
+        result = registry.deliver(
+            DeliveryRequest(
+                sink_type="file",
+                rule_id="rule-1",
+                entity_id="entity-1",
+                severity="warning",
+                message="persisted",
+                timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+                payload={"k": "v"},
+                config={"type": "file", "path": str(target), "timeout_s": 0.01},
+            )
+        )
+
+    snapshot = registry.metrics()
+
+    assert result.status == "failed"
+    assert result.retryable is True
+    assert snapshot.by_sink["file"].retryable_failures == 1
+    assert snapshot.by_sink["file"].dead_letters == 1
+    assert len(dead_letters.records) == 1
+
+
 def test_engine_records_delivery_results_for_stdout_sink():
     yaml_text = """
 rule_id: source_primary_spike
@@ -1167,6 +1250,32 @@ def test_object_storage_sink_marks_timeout_as_retryable():
 
     assert result.status == "failed"
     assert result.retryable is True
+
+
+def test_object_storage_sink_enforces_configured_timeout():
+    class SlowTransport:
+        def put_object(self, bucket, key, body, config):
+            time.sleep(0.05)
+            return {"bucket": bucket, "key": key}
+
+    sink = ObjectStorageSink(transport=SlowTransport())
+    result = sink.deliver(
+        DeliveryRequest(
+            sink_type="object_storage",
+            rule_id="rule-1",
+            entity_id="entity-1",
+            severity="warning",
+            message="stored",
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            payload={},
+            config={"type": "object_storage", "bucket": "archive", "timeout_s": 0.01},
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.retryable is True
+    assert result.metadata["bucket"] == "archive"
+    assert "idempotency_key" in result.metadata
 
 
 def test_object_storage_sink_failure_keeps_metadata_consistent():

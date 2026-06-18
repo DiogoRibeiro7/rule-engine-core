@@ -67,7 +67,7 @@ Example envelope:
 ### `file`
 
 - Output shape: one JSON envelope per line
-- Timeout handling: local filesystem write; no retry by default
+- Timeout handling: optional `timeout_s`; timeout failures are retryable
 - Idempotency expectation: caller chooses file path and downstream handling
 - Failure model: terminal on invalid path or write error
 
@@ -148,7 +148,8 @@ Success metadata example:
 ### `object_storage`
 
 - Output shape: one JSON envelope per stored object
-- Timeout handling: transport-raised `TimeoutError` is retryable
+- Timeout handling: transport-raised `TimeoutError` and optional configured
+  `timeout_s` are retryable
 - Idempotency expectation: object keys are deterministic only up to timestamp
   and rule id; consumers should use `idempotency_key` for semantic deduplication
 - Failure model:

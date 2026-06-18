@@ -192,6 +192,35 @@ actions:
     assert sink["signature_header"] == "X-Test-Signature"
 
 
+def test_load_rule_accepts_file_and_object_storage_timeout_fields():
+    yaml_text = """
+rule_id: timeout_rule
+description: sink timeouts
+trigger:
+  type: event
+sources:
+  - sensor_type: source_primary
+    entity_id: "*"
+condition:
+  operator: AND
+actions:
+  - severity: warning
+    message: "timed"
+    sinks:
+      - type: file
+        path: output/alerts.ndjson
+        timeout_s: 0.5
+      - type: object_storage
+        bucket: archive
+        prefix: alerts
+        timeout_s: 1.25
+"""
+    rule = load_rule_yaml(yaml_text)
+
+    assert rule.actions[0].sinks[0]["timeout_s"] == 0.5
+    assert rule.actions[0].sinks[1]["timeout_s"] == 1.25
+
+
 def test_get_rule_schema_exposes_required_top_level_fields():
     schema = get_rule_schema()
 

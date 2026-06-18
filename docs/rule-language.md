@@ -271,6 +271,7 @@ Supported fields:
 
 - `type`
 - `path`
+- `timeout_s`
 - `retry`
 
 ### `webhook`
@@ -309,6 +310,7 @@ Supported fields:
 - `bucket`
 - `prefix`
 - `extension`
+- `timeout_s`
 - `retryable`
 - `retry`
 
