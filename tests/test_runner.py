@@ -1,12 +1,15 @@
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
 from rule_engine.declarative import load_rule_yaml
 from rule_engine.runner import (
+    emit_replay_report_json,
     RuntimeRule,
     generate_json_schema,
     load_declarative_rules,
     replay_events,
+    replay_events_with_report,
 )
 from rule_engine.runtime import DeclarativeEngine
 from rule_engine.types import SensorEvent
@@ -60,6 +63,38 @@ def test_replay_composite_fixture_emits_alert_when_advanced_past_timeout():
     assert len(alerts) == 1
     assert alerts[0].rule_id == "dual_source_gap"
     assert alerts[0].alert.severity == "warning"
+
+
+def test_replay_events_with_report_returns_delivery_summary():
+    base_path = Path(__file__).resolve().parents[1]
+    rule_path = base_path / "sample_rules" / "dual_source_gap.yaml"
+    event_path = base_path / "sample_data" / "dual_source_gap_events.ndjson"
+    until = datetime(2023, 11, 15, 12, 26, 40, tzinfo=UTC)
+
+    alerts, report = replay_events_with_report([rule_path], event_path, until=until)
+
+    assert len(alerts) == 1
+    assert report.alert_count == 1
+    assert report.delivery_metrics.overall.total_requests == 1
+    assert report.delivery_metrics.overall.unsupported == 1
+    assert len(report.delivery_log) == 1
+    assert report.delivery_log[0].sink_type == "queue"
+    assert report.delivery_log[0].status == "unsupported"
+
+
+def test_emit_replay_report_json_includes_alerts_and_delivery_report():
+    base_path = Path(__file__).resolve().parents[1]
+    rule_path = base_path / "sample_rules" / "dual_source_gap.yaml"
+    event_path = base_path / "sample_data" / "dual_source_gap_events.ndjson"
+    until = datetime(2023, 11, 15, 12, 26, 40, tzinfo=UTC)
+
+    alerts, report = replay_events_with_report([rule_path], event_path, until=until)
+    payload = json.loads(emit_replay_report_json(alerts, report))
+
+    assert len(payload["alerts"]) == 1
+    assert payload["delivery_report"]["alert_count"] == 1
+    assert payload["delivery_report"]["delivery_metrics"]["overall"]["unsupported"] == 1
+    assert payload["delivery_report"]["delivery_log"][0]["sink_type"] == "queue"
 
 
 def test_event_rule_emits_alert():

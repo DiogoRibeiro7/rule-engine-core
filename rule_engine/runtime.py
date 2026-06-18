@@ -8,7 +8,13 @@ from statistics import mean, pstdev
 from typing import Any, Dict, Iterable, List, Optional
 
 from .declarative import Action, DeclarativeRule
-from .sinks import DeliveryRequest, DeliveryResult, SinkRegistry
+from .sinks import (
+    DeliveryLogEntry,
+    DeliveryMetricsSnapshot,
+    DeliveryRequest,
+    DeliveryResult,
+    SinkRegistry,
+)
 from .types import Alert, RuleContext, SensorEvent
 from .window import EntityWindow
 
@@ -184,6 +190,13 @@ class EmittedAlert:
     alert: Alert
     timestamp: datetime
     delivery_results: List[DeliveryResult] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ReplayDeliveryReport:
+    alert_count: int
+    delivery_metrics: DeliveryMetricsSnapshot
+    delivery_log: List[DeliveryLogEntry]
 
 
 def _flatten_context(data: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
@@ -399,6 +412,21 @@ class DeclarativeEngine:
         if until is not None:
             emitted.extend(self.advance_to(until))
         return emitted
+
+    def replay_with_report(
+        self, events: Iterable[SensorEvent], until: Optional[datetime] = None
+    ) -> tuple[List[EmittedAlert], ReplayDeliveryReport]:
+        self.sink_registry.reset_metrics()
+        self.sink_registry.clear_delivery_log()
+        alerts = self.replay(events, until=until)
+        return alerts, self.delivery_report(alerts)
+
+    def delivery_report(self, alerts: List[EmittedAlert]) -> ReplayDeliveryReport:
+        return ReplayDeliveryReport(
+            alert_count=len(alerts),
+            delivery_metrics=self.sink_registry.metrics(),
+            delivery_log=self.sink_registry.delivery_log(),
+        )
 
     def process_event(self, event: SensorEvent) -> List[EmittedAlert]:
         timestamp = event.timestamp

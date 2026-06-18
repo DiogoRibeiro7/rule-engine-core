@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from .declarative import DeclarativeRule, load_rule_file
-from .runtime import CompiledRule, DeclarativeEngine, EmittedAlert
+from .runtime import CompiledRule, DeclarativeEngine, EmittedAlert, ReplayDeliveryReport
 from .types import SensorEvent
 
 
@@ -119,6 +119,15 @@ def replay_events(
     return engine.replay(events, until=until)
 
 
+def replay_events_with_report(
+    rule_paths: List[Path], event_path: Path, until: Optional[datetime] = None
+) -> tuple[List[EmittedAlert], ReplayDeliveryReport]:
+    rules = load_rule_documents(rule_paths)
+    events = load_ndjson_events(event_path)
+    engine = DeclarativeEngine(rules)
+    return engine.replay_with_report(events, until=until)
+
+
 def format_runtime_rule(rule: RuntimeRule) -> str:
     lines: List[str] = [
         f"rule_id: {rule.rule_id}",
@@ -139,6 +148,82 @@ def format_alert(alert: EmittedAlert) -> str:
         f"rule={alert.rule_id} severity={alert.alert.severity} "
         f"message={alert.alert.message}"
     )
+
+
+def _alert_to_dict(alert: EmittedAlert) -> Dict[str, Any]:
+    return {
+        "entity_id": alert.entity_id,
+        "rule_id": alert.rule_id,
+        "timestamp": alert.timestamp.isoformat(),
+        "alert": {
+            "severity": alert.alert.severity,
+            "message": alert.alert.message,
+            "metadata": alert.alert.metadata,
+        },
+        "delivery_results": [
+            {
+                "sink_type": result.sink_type,
+                "status": result.status,
+                "detail": result.detail,
+                "retryable": result.retryable,
+                "metadata": result.metadata,
+            }
+            for result in alert.delivery_results
+        ],
+    }
+
+
+def _metrics_to_dict(metrics: Any) -> Dict[str, Any]:
+    return {
+        "total_requests": metrics.total_requests,
+        "total_attempts": metrics.total_attempts,
+        "delivered": metrics.delivered,
+        "failed": metrics.failed,
+        "unsupported": metrics.unsupported,
+        "retryable_failures": metrics.retryable_failures,
+        "retries_attempted": metrics.retries_attempted,
+        "dead_letters": metrics.dead_letters,
+        "total_latency_ms": metrics.total_latency_ms,
+        "max_latency_ms": metrics.max_latency_ms,
+        "average_latency_ms": metrics.average_latency_ms,
+    }
+
+
+def emit_replay_report_json(
+    alerts: List[EmittedAlert],
+    report: ReplayDeliveryReport,
+) -> str:
+    payload = {
+        "alerts": [_alert_to_dict(alert) for alert in alerts],
+        "delivery_report": {
+            "alert_count": report.alert_count,
+            "delivery_metrics": {
+                "overall": _metrics_to_dict(report.delivery_metrics.overall),
+                "by_sink": {
+                    sink_type: _metrics_to_dict(metrics)
+                    for sink_type, metrics in report.delivery_metrics.by_sink.items()
+                },
+            },
+            "delivery_log": [
+                {
+                    "sink_type": entry.sink_type,
+                    "rule_id": entry.rule_id,
+                    "entity_id": entry.entity_id,
+                    "severity": entry.severity,
+                    "status": entry.status,
+                    "detail": entry.detail,
+                    "attempt_count": entry.attempt_count,
+                    "retry_count": entry.retry_count,
+                    "latency_ms": entry.latency_ms,
+                    "dead_lettered": entry.dead_lettered,
+                    "retryable": entry.retryable,
+                    "metadata": entry.metadata,
+                }
+                for entry in report.delivery_log
+            ],
+        },
+    }
+    return json.dumps(payload, indent=2)
 
 
 def generate_json_schema() -> Dict[str, Any]:
@@ -182,6 +267,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--schema", action="store_true", help="Emit the JSON schema for the runtime model")
     parser.add_argument("--events", help="Path to an NDJSON file of sensor events")
     parser.add_argument(
+        "--delivery-report-json",
+        action="store_true",
+        help="Emit replay alerts plus the delivery report as JSON",
+    )
+    parser.add_argument(
         "--until",
         help="Optional ISO-8601 UTC timestamp to advance timers after the final event",
     )
@@ -201,6 +291,10 @@ def main(argv: Iterable[str] | None = None) -> int:
         return 0
     if args.events:
         until = datetime.fromisoformat(args.until) if args.until else None
+        if args.delivery_report_json:
+            alerts, report = replay_events_with_report(rule_paths, Path(args.events), until=until)
+            print(emit_replay_report_json(alerts, report))
+            return 0
         alerts = replay_events(rule_paths, Path(args.events), until=until)
         for alert in alerts:
             print(format_alert(alert))

@@ -15,6 +15,7 @@ extended toward a fully implemented sink delivery system.
 - Declarative sink configs are validated at rule-load time and normalized onto canonical sink types.
 - Sink dispatch now supports bounded retries, configurable backoff, dead-letter recording, delivery metrics snapshots, and structured delivery logs.
 - Delivery observability now covers overall and per-sink counts, retry activity, unsupported routes, dead letters, and measured delivery latency.
+- Replay execution can now return a typed delivery report, and the CLI can emit alerts plus delivery telemetry as JSON.
 - Sink delivery is still incomplete at the production-integration level; stronger backend integrations and broader policy controls are still pending.
 
 ## Repository layout
@@ -35,6 +36,7 @@ What this repo is:
 - the base for sink delivery adapters, with `stdout`, file, webhook, queue, and object-storage support already present
 - an explicit sink configuration grammar with canonical sink names
 - a delivery layer with retry, backoff, dead-letter, delivery-metrics, and structured-delivery-log primitives
+- a replay/report surface for downstream tooling and automation
 
 What this repo is not yet:
 
@@ -73,6 +75,12 @@ Replay a timer-driven rule and advance the engine past the final event:
 
 ```bash
 python -m rule_engine.runner sample_rules/dual_source_gap.yaml --events sample_data/dual_source_gap_events.ndjson --until 2023-11-15T12:26:40+00:00
+```
+
+Emit replay alerts together with the delivery report as JSON:
+
+```bash
+python -m rule_engine.runner sample_rules/dual_source_gap.yaml --events sample_data/dual_source_gap_events.ndjson --until 2023-11-15T12:26:40+00:00 --delivery-report-json
 ```
 
 ## Roadmap Alignment

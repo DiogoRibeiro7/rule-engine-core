@@ -22,6 +22,7 @@ from .sinks import (
     StdoutSink,
     WebhookSink,
 )
+from .runtime import ReplayDeliveryReport
 from .types import Alert, RuleContext, SensorEvent, StoreRecord
 from .window import EntityWindow
 
@@ -44,6 +45,7 @@ __all__ = [
     "ObjectStorageTransport",
     "QueueSink",
     "QueueTransport",
+    "ReplayDeliveryReport",
     "RetryPolicy",
     "RuleContext",
     "SensorEvent",
