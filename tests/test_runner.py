@@ -127,6 +127,39 @@ def test_emit_replay_report_json_includes_alerts_and_delivery_report():
     assert payload["delivery_report"]["delivery_log"][0]["sink_type"] == "queue"
 
 
+def test_replay_delivery_report_and_evaluation_result_export_helpers():
+    base_path = Path(__file__).resolve().parents[1]
+    rule_path = base_path / "sample_rules" / "dual_source_gap.yaml"
+    event_path = base_path / "sample_data" / "dual_source_gap_events.ndjson"
+    until = datetime(2023, 11, 15, 12, 26, 40, tzinfo=UTC)
+    embedded = build_engine_from_yaml([rule_path.read_text(encoding="utf-8")])
+    events = [
+        SensorEvent(
+            entity_id=payload["entity_id"],
+            sensor_type=payload["sensor_type"],
+            value=float(payload["value"]),
+            timestamp_ms=int(payload["timestamp_ms"]),
+        )
+        for payload in (
+            json.loads(line)
+            for line in event_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+    ]
+
+    result = embedded.evaluate(events, until=until)
+    report_payload = result.delivery_report.to_dict()
+    result_payload = result.to_dict()
+
+    assert report_payload["alert_count"] == 1
+    assert report_payload["delivery_metrics"]["overall"]["unsupported"] == 1
+    assert report_payload["delivery_log"][0]["sink_type"] == "queue"
+    assert result_payload["delivery_report"] == report_payload
+    assert len(result_payload["alerts"]) == 1
+    assert json.loads(result.delivery_report.to_json()) == report_payload
+    assert json.loads(result.to_json()) == result_payload
+
+
 def test_event_rule_emits_alert():
     yaml_text = """
 rule_id: source_primary_spike

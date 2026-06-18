@@ -335,6 +335,21 @@ class DeliveryMetrics:
             return 0.0
         return self.total_latency_ms / self.total_attempts
 
+    def to_dict(self) -> Dict[str, float]:
+        return {
+            "total_requests": self.total_requests,
+            "total_attempts": self.total_attempts,
+            "delivered": self.delivered,
+            "failed": self.failed,
+            "unsupported": self.unsupported,
+            "retryable_failures": self.retryable_failures,
+            "retries_attempted": self.retries_attempted,
+            "dead_letters": self.dead_letters,
+            "total_latency_ms": self.total_latency_ms,
+            "max_latency_ms": self.max_latency_ms,
+            "average_latency_ms": self.average_latency_ms,
+        }
+
 
 def build_delivery_payload(request: DeliveryRequest) -> DeliveryPayload:
     timestamp = request.timestamp.isoformat()
@@ -381,6 +396,18 @@ class DeliveryMetricsSnapshot:
     def metrics_for(self, sink_type: str) -> DeliveryMetrics:
         return self.by_sink.get(sink_type, DeliveryMetrics())
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "overall": self.overall.to_dict(),
+            "by_sink": {
+                sink_type: metrics.to_dict()
+                for sink_type, metrics in sorted(self.by_sink.items())
+            },
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2)
+
 
 @dataclass(frozen=True)
 class DeliveryLogEntry:
@@ -396,6 +423,22 @@ class DeliveryLogEntry:
     dead_lettered: bool
     retryable: bool
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "sink_type": self.sink_type,
+            "rule_id": self.rule_id,
+            "entity_id": self.entity_id,
+            "severity": self.severity,
+            "status": self.status,
+            "detail": self.detail,
+            "attempt_count": self.attempt_count,
+            "retry_count": self.retry_count,
+            "latency_ms": self.latency_ms,
+            "dead_lettered": self.dead_lettered,
+            "retryable": self.retryable,
+            "metadata": dict(self.metadata),
+        }
 
 
 @dataclass(frozen=True)

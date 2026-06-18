@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from .sinks import DeliveryLogEntry, DeliveryMetrics, DeliveryMetricsSnapshot, DeliveryResult
 from .types import Alert
@@ -15,6 +16,28 @@ class EmittedAlert:
     alert: Alert
     timestamp: datetime
     delivery_results: List[DeliveryResult] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "entity_id": self.entity_id,
+            "rule_id": self.rule_id,
+            "timestamp": self.timestamp.isoformat(),
+            "alert": {
+                "severity": self.alert.severity,
+                "message": self.alert.message,
+                "metadata": self.alert.metadata,
+            },
+            "delivery_results": [
+                {
+                    "sink_type": result.sink_type,
+                    "status": result.status,
+                    "detail": result.detail,
+                    "retryable": result.retryable,
+                    "metadata": dict(result.metadata),
+                }
+                for result in self.delivery_results
+            ],
+        }
 
 
 @dataclass(frozen=True)
@@ -46,6 +69,16 @@ class ReplayDeliveryReport:
     def dead_letter_entries(self) -> List[DeliveryLogEntry]:
         return [entry for entry in self.delivery_log if entry.dead_lettered]
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "alert_count": self.alert_count,
+            "delivery_metrics": self.delivery_metrics.to_dict(),
+            "delivery_log": [entry.to_dict() for entry in self.delivery_log],
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2)
+
 
 @dataclass(frozen=True)
 class RuleMetadata:
@@ -70,6 +103,15 @@ class EvaluationResult:
     @property
     def has_failures(self) -> bool:
         return self.delivery_report.has_failures
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "alerts": [alert.to_dict() for alert in self.alerts],
+            "delivery_report": self.delivery_report.to_dict(),
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2)
 
 
 @dataclass(frozen=True)

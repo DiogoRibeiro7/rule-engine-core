@@ -156,78 +156,13 @@ def format_alert(alert: EmittedAlert) -> str:
     )
 
 
-def _alert_to_dict(alert: EmittedAlert) -> Dict[str, Any]:
-    return {
-        "entity_id": alert.entity_id,
-        "rule_id": alert.rule_id,
-        "timestamp": alert.timestamp.isoformat(),
-        "alert": {
-            "severity": alert.alert.severity,
-            "message": alert.alert.message,
-            "metadata": alert.alert.metadata,
-        },
-        "delivery_results": [
-            {
-                "sink_type": result.sink_type,
-                "status": result.status,
-                "detail": result.detail,
-                "retryable": result.retryable,
-                "metadata": result.metadata,
-            }
-            for result in alert.delivery_results
-        ],
-    }
-
-
-def _metrics_to_dict(metrics: Any) -> Dict[str, Any]:
-    return {
-        "total_requests": metrics.total_requests,
-        "total_attempts": metrics.total_attempts,
-        "delivered": metrics.delivered,
-        "failed": metrics.failed,
-        "unsupported": metrics.unsupported,
-        "retryable_failures": metrics.retryable_failures,
-        "retries_attempted": metrics.retries_attempted,
-        "dead_letters": metrics.dead_letters,
-        "total_latency_ms": metrics.total_latency_ms,
-        "max_latency_ms": metrics.max_latency_ms,
-        "average_latency_ms": metrics.average_latency_ms,
-    }
-
-
 def emit_replay_report_json(
     alerts: List[EmittedAlert],
     report: ReplayDeliveryReport,
 ) -> str:
     payload = {
-        "alerts": [_alert_to_dict(alert) for alert in alerts],
-        "delivery_report": {
-            "alert_count": report.alert_count,
-            "delivery_metrics": {
-                "overall": _metrics_to_dict(report.delivery_metrics.overall),
-                "by_sink": {
-                    sink_type: _metrics_to_dict(metrics)
-                    for sink_type, metrics in report.delivery_metrics.by_sink.items()
-                },
-            },
-            "delivery_log": [
-                {
-                    "sink_type": entry.sink_type,
-                    "rule_id": entry.rule_id,
-                    "entity_id": entry.entity_id,
-                    "severity": entry.severity,
-                    "status": entry.status,
-                    "detail": entry.detail,
-                    "attempt_count": entry.attempt_count,
-                    "retry_count": entry.retry_count,
-                    "latency_ms": entry.latency_ms,
-                    "dead_lettered": entry.dead_lettered,
-                    "retryable": entry.retryable,
-                    "metadata": entry.metadata,
-                }
-                for entry in report.delivery_log
-            ],
-        },
+        "alerts": [alert.to_dict() for alert in alerts],
+        "delivery_report": report.to_dict(),
     }
     return json.dumps(payload, indent=2)
 

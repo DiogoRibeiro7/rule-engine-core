@@ -43,6 +43,7 @@ Build a small, trustworthy declarative rule engine that:
 - The compile/runtime/sink architecture boundaries are now documented explicitly in-repo.
 - Typed delivery reports now expose convenience query helpers for downstream inspection.
 - The repo now includes focused Python embedding examples for compiled rules, sink setup, and report inspection.
+- Typed delivery metrics snapshots, replay reports, and evaluation results now expose structured export helpers for downstream embedding code.
 
 ## Completed Foundations
 
@@ -69,8 +70,6 @@ Candidate work:
 - Add explicit delivery timeout coverage for file/object-storage paths where it
   makes sense.
 - Add stronger dead-letter persistence options and retention guidance.
-- Add optional structured sink metrics export helpers for downstream embedding
-  code.
 - Add more failure-mode coverage around partial transport exceptions and adapter
   metadata consistency.
 

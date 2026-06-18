@@ -564,6 +564,54 @@ def test_sink_registry_records_latency_and_structured_delivery_log():
     assert log[0].dead_lettered is False
 
 
+def test_delivery_metrics_snapshot_exports_structured_dict_and_json():
+    class FlakySink:
+        sink_type = "flaky"
+
+        def __init__(self):
+            self.calls = 0
+
+        def deliver(self, request):
+            self.calls += 1
+            if self.calls == 1:
+                return DeliveryResult(
+                    sink_type="flaky",
+                    status="failed",
+                    detail="temporary",
+                    retryable=True,
+                )
+            return DeliveryResult(
+                sink_type="flaky",
+                status="delivered",
+                detail="ok",
+            )
+
+    registry = SinkRegistry(adapters=[FlakySink()])
+    with patch(
+        "rule_engine.sinks.time.perf_counter",
+        side_effect=[1.0, 1.01, 2.0, 2.025],
+    ):
+        registry.deliver(
+            DeliveryRequest(
+                sink_type="flaky",
+                rule_id="rule-1",
+                entity_id="entity-1",
+                severity="warning",
+                message="hello",
+                timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+                payload={},
+                config={"type": "flaky", "retry": {"max_attempts": 2}},
+            )
+        )
+
+    payload = registry.metrics().to_dict()
+
+    assert payload["overall"]["total_requests"] == 1
+    assert payload["overall"]["average_latency_ms"] == pytest.approx(17.5)
+    assert payload["by_sink"]["flaky"]["total_attempts"] == 2
+    assert json.loads(registry.metrics().to_json()) == payload
+
+
 def test_sink_registry_can_clear_delivery_log():
     registry = SinkRegistry()
     registry.deliver(
