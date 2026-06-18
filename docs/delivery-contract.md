@@ -1,0 +1,85 @@
+# Delivery Contract
+
+This document describes the runtime delivery contract used by the implemented
+sink adapters.
+
+## Shared Envelope
+
+Every non-stdout sink receives the same serialized payload envelope. The
+runtime builds it from `rule_engine.sinks.DeliveryPayload`.
+
+Fields:
+
+- `contract_version` — current value: `rule-engine-core.v1`
+- `sink_type` — sink route selected by the rule action
+- `idempotency_key` — deterministic SHA-256 digest of rule id, entity id,
+  severity, timestamp, and rendered message
+- `entity_id`
+- `rule_id`
+- `severity`
+- `message`
+- `timestamp` — ISO-8601 UTC timestamp string
+- `payload` — alert metadata/context payload produced by the runtime
+
+## Sink Semantics
+
+### `stdout`
+
+- Output shape: human-readable log line, not the JSON envelope
+- Timeout handling: none
+- Idempotency expectation: best-effort only
+- Failure model: always local process output; no retry contract
+
+### `file`
+
+- Output shape: one JSON envelope per line
+- Timeout handling: local filesystem write; no retry by default
+- Idempotency expectation: caller chooses file path and downstream handling
+- Failure model: terminal on invalid path or write error
+
+### `webhook`
+
+- Output shape: JSON envelope as HTTP request body
+- Timeout handling: `timeout_s` per request
+- Idempotency expectation: downstream webhook should treat `idempotency_key` as
+  the deduplication token if it needs exactly-once behavior
+- Failure model:
+  - HTTP `5xx`, transport errors, and socket timeouts are retryable
+  - HTTP `4xx` is terminal
+
+### `queue`
+
+- Output shape: JSON envelope passed to the configured queue transport
+- Timeout handling: transport-raised `TimeoutError` is retryable
+- Idempotency expectation: downstream queue consumer should use
+  `idempotency_key` if duplicate suppression matters
+- Failure model:
+  - `TimeoutError` is retryable
+  - other exceptions are retryable only when `retryable: true` is configured
+
+### `object_storage`
+
+- Output shape: one JSON envelope per stored object
+- Timeout handling: transport-raised `TimeoutError` is retryable
+- Idempotency expectation: object keys are deterministic only up to timestamp
+  and rule id; consumers should use `idempotency_key` for semantic deduplication
+- Failure model:
+  - `TimeoutError` is retryable
+  - other exceptions are retryable only when `retryable: true` is configured
+
+## Delivery Results
+
+Delivery results report:
+
+- `status`
+- `detail`
+- `retryable`
+- `metadata`
+
+For implemented sinks, `metadata` now includes at least:
+
+- `contract_version`
+- `idempotency_key`
+
+Concrete sinks may add extra fields such as `path`, `status_code`, `queue`,
+`bucket`, `key`, or transport-returned identifiers.

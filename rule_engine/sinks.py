@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import socket
 import time
@@ -256,6 +257,35 @@ class DeliveryRequest:
 
 
 @dataclass(frozen=True)
+class DeliveryPayload:
+    contract_version: str
+    sink_type: str
+    idempotency_key: str
+    entity_id: str
+    rule_id: str
+    severity: str
+    message: str
+    timestamp: str
+    payload: Dict[str, Any]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "sink_type": self.sink_type,
+            "idempotency_key": self.idempotency_key,
+            "entity_id": self.entity_id,
+            "rule_id": self.rule_id,
+            "severity": self.severity,
+            "message": self.message,
+            "timestamp": self.timestamp,
+            "payload": self.payload,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict())
+
+
+@dataclass(frozen=True)
 class DeliveryResult:
     sink_type: str
     status: str
@@ -282,6 +312,35 @@ class DeliveryMetrics:
         if self.total_attempts == 0:
             return 0.0
         return self.total_latency_ms / self.total_attempts
+
+
+def build_delivery_payload(request: DeliveryRequest) -> DeliveryPayload:
+    timestamp = request.timestamp.isoformat()
+    raw_key = (
+        f"{request.rule_id}|{request.entity_id}|{request.severity}|"
+        f"{timestamp}|{request.message}"
+    )
+    digest = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+    return DeliveryPayload(
+        contract_version="rule-engine-core.v1",
+        sink_type=request.sink_type,
+        idempotency_key=digest,
+        entity_id=request.entity_id,
+        rule_id=request.rule_id,
+        severity=request.severity,
+        message=request.message,
+        timestamp=timestamp,
+        payload=request.payload,
+    )
+
+
+def _payload_metadata(payload: DeliveryPayload, **extra: Any) -> Dict[str, Any]:
+    metadata = {
+        "contract_version": payload.contract_version,
+        "idempotency_key": payload.idempotency_key,
+    }
+    metadata.update(extra)
+    return metadata
 
 
 @dataclass(frozen=True)
@@ -606,21 +665,14 @@ class FileSink:
             )
         path = Path(config.path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        record = {
-            "entity_id": request.entity_id,
-            "rule_id": request.rule_id,
-            "severity": request.severity,
-            "message": request.message,
-            "timestamp": request.timestamp.isoformat(),
-            "payload": request.payload,
-        }
+        payload = build_delivery_payload(request)
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record) + "\n")
+            handle.write(payload.to_json() + "\n")
         return DeliveryResult(
             sink_type=self.sink_type,
             status="delivered",
             detail="Delivered to file",
-            metadata={"path": str(path)},
+            metadata=_payload_metadata(payload, path=str(path)),
         )
 
 
@@ -637,15 +689,8 @@ class WebhookSink:
             )
 
         timeout_s = config.timeout_s
-        payload = {
-            "entity_id": req.entity_id,
-            "rule_id": req.rule_id,
-            "severity": req.severity,
-            "message": req.message,
-            "timestamp": req.timestamp.isoformat(),
-            "payload": req.payload,
-        }
-        body = json.dumps(payload).encode("utf-8")
+        payload = build_delivery_payload(req)
+        body = payload.to_json().encode("utf-8")
         headers = {"Content-Type": "application/json"}
         headers.update(config.headers)
         method = config.method
@@ -663,7 +708,11 @@ class WebhookSink:
                     sink_type=self.sink_type,
                     status="delivered",
                     detail="Delivered to webhook",
-                    metadata={"status_code": status_code, "url": config.url},
+                    metadata=_payload_metadata(
+                        payload,
+                        status_code=status_code,
+                        url=config.url,
+                    ),
                 )
         except error.HTTPError as exc:
             retryable = exc.code >= 500
@@ -672,7 +721,11 @@ class WebhookSink:
                 status="failed",
                 detail=f"Webhook returned HTTP {exc.code}",
                 retryable=retryable,
-                metadata={"status_code": exc.code, "url": config.url},
+                metadata=_payload_metadata(
+                    payload,
+                    status_code=exc.code,
+                    url=config.url,
+                ),
             )
         except (error.URLError, TimeoutError, socket.timeout) as exc:
             return DeliveryResult(
@@ -680,7 +733,7 @@ class WebhookSink:
                 status="failed",
                 detail=f"Webhook delivery failed: {exc}",
                 retryable=True,
-                metadata={"url": config.url},
+                metadata=_payload_metadata(payload, url=config.url),
             )
 
 
@@ -715,24 +768,18 @@ class QueueSink:
                 detail="Missing required sink config field 'queue'",
             )
 
-        payload = {
-            "entity_id": req.entity_id,
-            "rule_id": req.rule_id,
-            "severity": req.severity,
-            "message": req.message,
-            "timestamp": req.timestamp.isoformat(),
-            "payload": req.payload,
-        }
+        payload = build_delivery_payload(req)
         try:
-            transport_result = self.transport.send(config.queue, payload, config.to_dict())
+            transport_result = self.transport.send(
+                config.queue,
+                payload.to_dict(),
+                config.to_dict(),
+            )
             return DeliveryResult(
                 sink_type=self.sink_type,
                 status="delivered",
                 detail="Delivered to queue",
-                metadata={
-                    "queue": config.queue,
-                    **transport_result,
-                },
+                metadata=_payload_metadata(payload, queue=config.queue, **transport_result),
             )
         except TimeoutError as exc:
             return DeliveryResult(
@@ -740,7 +787,7 @@ class QueueSink:
                 status="failed",
                 detail=f"Queue delivery timed out: {exc}",
                 retryable=True,
-                metadata={"queue": config.queue},
+                metadata=_payload_metadata(payload, queue=config.queue),
             )
         except Exception as exc:
             return DeliveryResult(
@@ -748,7 +795,7 @@ class QueueSink:
                 status="failed",
                 detail=f"Queue delivery failed: {exc}",
                 retryable=config.retryable,
-                metadata={"queue": config.queue},
+                metadata=_payload_metadata(payload, queue=config.queue),
             )
 
 
@@ -801,23 +848,15 @@ class ObjectStorageSink:
         timestamp_token = req.timestamp.strftime("%Y%m%dT%H%M%SZ")
         base_name = f"{req.rule_id}-{timestamp_token}.{extension}"
         key = f"{prefix}/{base_name}" if prefix else base_name
-        body = json.dumps(
-            {
-                "entity_id": req.entity_id,
-                "rule_id": req.rule_id,
-                "severity": req.severity,
-                "message": req.message,
-                "timestamp": req.timestamp.isoformat(),
-                "payload": req.payload,
-            }
-        )
+        payload = build_delivery_payload(req)
+        body = payload.to_json()
         try:
             result = self.transport.put_object(config.bucket, key, body, config.to_dict())
             return DeliveryResult(
                 sink_type=self.sink_type,
                 status="delivered",
                 detail="Delivered to object storage",
-                metadata=result,
+                metadata=_payload_metadata(payload, **result),
             )
         except TimeoutError as exc:
             return DeliveryResult(
@@ -825,7 +864,7 @@ class ObjectStorageSink:
                 status="failed",
                 detail=f"Object storage delivery timed out: {exc}",
                 retryable=True,
-                metadata={"bucket": config.bucket, "key": key},
+                metadata=_payload_metadata(payload, bucket=config.bucket, key=key),
             )
         except Exception as exc:
             return DeliveryResult(
@@ -833,5 +872,5 @@ class ObjectStorageSink:
                 status="failed",
                 detail=f"Object storage delivery failed: {exc}",
                 retryable=config.retryable,
-                metadata={"bucket": config.bucket, "key": key},
+                metadata=_payload_metadata(payload, bucket=config.bucket, key=key),
             )

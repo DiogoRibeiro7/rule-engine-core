@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -25,6 +26,7 @@ from rule_engine.sinks import (
     StdoutSinkConfig,
     WebhookSink,
     WebhookSinkConfig,
+    build_delivery_payload,
     parse_sink_config,
 )
 from rule_engine.types import SensorEvent
@@ -100,6 +102,29 @@ def test_parse_sink_config_returns_typed_config():
     assert config.headers == {"X-Test": "1"}
     assert config.method == "PUT"
     assert config.retry.max_attempts == 3
+
+
+def test_build_delivery_payload_defines_stable_contract():
+    payload = build_delivery_payload(
+        DeliveryRequest(
+            sink_type="queue",
+            rule_id="rule-1",
+            entity_id="entity-1",
+            severity="warning",
+            message="hello",
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            payload={"variables": {"x": 1}},
+            config={"type": "queue", "queue": "alerts"},
+        )
+    )
+
+    assert payload.contract_version == "rule-engine-core.v1"
+    assert payload.sink_type == "queue"
+    assert payload.entity_id == "entity-1"
+    assert payload.rule_id == "rule-1"
+    assert payload.timestamp == "2024-01-01T00:00:00+00:00"
+    assert payload.payload == {"variables": {"x": 1}}
+    assert len(payload.idempotency_key) == 64
 
 
 def test_sink_registry_coerces_raw_dict_config_before_adapter_dispatch():
@@ -577,9 +602,16 @@ def test_file_sink_writes_ndjson_record(tmp_path: Path):
     )
 
     assert result.status == "delivered"
-    content = target.read_text(encoding="utf-8")
-    assert '"entity_id": "entity-1"' in content
-    assert '"message": "persisted"' in content
+    payload = [
+        line for line in target.read_text(encoding="utf-8").splitlines() if line.strip()
+    ][0]
+    record = json.loads(payload)
+    assert record["contract_version"] == "rule-engine-core.v1"
+    assert record["entity_id"] == "entity-1"
+    assert record["message"] == "persisted"
+    assert record["payload"] == {"k": "v"}
+    assert result.metadata["contract_version"] == "rule-engine-core.v1"
+    assert "idempotency_key" in result.metadata
 
 
 def test_engine_records_delivery_results_for_stdout_sink():
@@ -626,6 +658,7 @@ actions:
 
 def test_webhook_sink_delivers_successfully():
     sink = WebhookSink()
+    captured_request = {}
 
     class FakeResponse:
         status = 202
@@ -639,7 +672,12 @@ def test_webhook_sink_delivers_successfully():
         def getcode(self):
             return self.status
 
-    with patch("rule_engine.sinks.request.urlopen", return_value=FakeResponse()):
+    def fake_urlopen(http_request, timeout):
+        captured_request["body"] = http_request.data.decode("utf-8")
+        captured_request["timeout"] = timeout
+        return FakeResponse()
+
+    with patch("rule_engine.sinks.request.urlopen", side_effect=fake_urlopen):
         result = sink.deliver(
             DeliveryRequest(
                 sink_type="webhook",
@@ -655,6 +693,11 @@ def test_webhook_sink_delivers_successfully():
 
     assert result.status == "delivered"
     assert result.metadata["status_code"] == 202
+    payload = json.loads(captured_request["body"])
+    assert payload["contract_version"] == "rule-engine-core.v1"
+    assert payload["sink_type"] == "webhook"
+    assert payload["entity_id"] == "entity-1"
+    assert captured_request["timeout"] == 5.0
 
 
 def test_webhook_sink_marks_4xx_as_terminal_failure():
@@ -729,6 +772,11 @@ def test_queue_sink_delivers_successfully():
     assert result.status == "delivered"
     assert result.metadata["queue"] == "alerts"
     assert len(transport.messages) == 1
+    payload = transport.messages[0]["payload"]
+    assert payload["contract_version"] == "rule-engine-core.v1"
+    assert payload["sink_type"] == "queue"
+    assert payload["entity_id"] == "entity-1"
+    assert "idempotency_key" in payload
 
 
 def test_queue_sink_requires_queue_name():
@@ -835,7 +883,10 @@ def test_object_storage_sink_writes_object(tmp_path: Path):
     assert result.status == "delivered"
     stored_path = Path(result.metadata["path"])
     assert stored_path.exists()
-    assert '"entity_id": "entity-1"' in stored_path.read_text(encoding="utf-8")
+    payload = json.loads(stored_path.read_text(encoding="utf-8"))
+    assert payload["contract_version"] == "rule-engine-core.v1"
+    assert payload["entity_id"] == "entity-1"
+    assert payload["sink_type"] == "object_storage"
 
 
 def test_object_storage_sink_requires_bucket():

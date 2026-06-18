@@ -24,6 +24,7 @@ extended toward a fully implemented sink delivery system.
 - A first-class sink contract now exists, with `stdout`, file, webhook, queue, and object-storage sinks implemented.
 - Declarative sink configs are validated at rule-load time and normalized onto canonical sink types.
 - Runtime sink dispatch now coerces validated sink dictionaries into explicit typed sink config objects.
+- Non-stdout sinks now share a single versioned delivery envelope with an explicit idempotency key.
 - Sink dispatch now supports bounded retries, configurable backoff, dead-letter recording, delivery metrics snapshots, and structured delivery logs.
 - Delivery observability now covers overall and per-sink counts, retry activity, unsupported routes, dead letters, and measured delivery latency.
 - Replay execution can now return a typed delivery report, and the CLI can emit alerts plus delivery telemetry as JSON.
@@ -41,6 +42,7 @@ extended toward a fully implemented sink delivery system.
 - `sample_data/` — NDJSON fixtures for replay-based tests and demos.
 - `docs/examples.md` — small multi-domain examples that show how the same engine shape is reused.
 - `docs/architecture.svg` — public-facing architecture diagram for repo pages and social sharing.
+- `docs/delivery-contract.md` — executable delivery envelope and sink-specific semantics.
 - `docs/rule-language.md` — exact supported declarative rule-language subset.
 - `docs/linkedin-project-kit.md` — reusable LinkedIn project copy, post text, and publishing checklist.
 - `CONTRIBUTING.md` — contributor workflow and repo-specific change rules.
@@ -66,6 +68,7 @@ What this repo is:
 - compile-time validation for trigger semantics, durations, cron syntax, and condition grammar edges
 - a delivery layer with retry, backoff, dead-letter, delivery-metrics, and structured-delivery-log primitives
 - explicit typed sink configuration objects behind the declarative YAML surface
+- a versioned delivery envelope with a deterministic idempotency key for implemented sinks
 - a replay/report surface for downstream tooling and automation
 - a type-checked core package with CI enforcement
 
@@ -181,6 +184,12 @@ The exact supported declarative subset is documented in
 - aggregation functions
 - sink configuration grammar
 - explicitly unsupported features
+
+## Delivery Contract
+
+The implemented sink delivery contract lives in `docs/delivery-contract.md`.
+That file defines the shared payload envelope, retryability expectations, and
+sink-specific semantics for the currently supported adapters.
 
 ## Examples
 
