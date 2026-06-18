@@ -19,5 +19,5 @@ actions:
   - severity: warning
     message: "Dual source inactivity warning for {{entity_id}}."
     sinks:
-      - type: sqs
-        queue_url: "https://sqs.example.com/queue"
+      - type: queue
+        queue: "alert-events"

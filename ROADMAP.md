@@ -19,7 +19,8 @@ Build a small, trustworthy declarative rule engine that:
 - Supported trigger families are `event`, `window`, `absence`, `composite`, and `scheduled`.
 - Tests cover core alert behavior and replay timing.
 - The package is now generic; the sample rules are only reference fixtures.
-- Sink definitions are still mostly declarative surface area and metadata, not a complete delivery layer.
+- Sink configs now validate against explicit grammar for the implemented sink types.
+- The delivery layer is executable, but production-grade backend breadth and policy depth are still incomplete.
 
 ## Phase 1: Stabilize The Core
 

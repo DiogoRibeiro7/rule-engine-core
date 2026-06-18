@@ -6,6 +6,36 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 
+_SINK_TYPE_ALIASES = {
+    "console": "stdout",
+    "ndjson": "file",
+    "sqs": "queue",
+    "object-store": "object_storage",
+}
+_COMMON_SINK_FIELDS = {"type", "retry"}
+_SINK_ALLOWED_FIELDS = {
+    "stdout": set(),
+    "file": {"path"},
+    "webhook": {"url", "timeout_s", "headers", "method"},
+    "queue": {"queue", "retryable"},
+    "object_storage": {"bucket", "prefix", "extension", "retryable"},
+}
+_SINK_REQUIRED_FIELDS = {
+    "stdout": set(),
+    "file": {"path"},
+    "webhook": {"url"},
+    "queue": {"queue"},
+    "object_storage": {"bucket"},
+}
+_RETRY_ALLOWED_FIELDS = {
+    "max_attempts",
+    "base_delay_s",
+    "multiplier",
+    "max_delay_s",
+    "sleep",
+}
+
+
 @dataclass
 class Trigger:
     type: str
@@ -57,6 +87,68 @@ class DeclarativeRule:
         return "unknown"
 
 
+def _validate_retry_config(rule_id: str, action_index: int, sink_type: str, value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(
+            f"Rule {rule_id} action {action_index} sink '{sink_type}' field 'retry' must be an object"
+        )
+    unknown = set(value) - _RETRY_ALLOWED_FIELDS
+    if unknown:
+        unknown_list = ", ".join(sorted(unknown))
+        raise ValueError(
+            f"Rule {rule_id} action {action_index} sink '{sink_type}' has unsupported retry fields: {unknown_list}"
+        )
+    return value
+
+
+def _normalize_sink_config(rule_id: str, action_index: int, sink: Any) -> Dict[str, Any]:
+    if not isinstance(sink, dict):
+        raise ValueError(f"Rule {rule_id} action {action_index} sink must be an object")
+
+    raw_type = sink.get("type")
+    if not raw_type:
+        raise ValueError(f"Rule {rule_id} action {action_index} sink is missing required field 'type'")
+
+    sink_type = _SINK_TYPE_ALIASES.get(str(raw_type), str(raw_type))
+    if sink_type not in _SINK_ALLOWED_FIELDS:
+        supported = ", ".join(sorted(_SINK_ALLOWED_FIELDS))
+        raise ValueError(
+            f"Rule {rule_id} action {action_index} sink type '{raw_type}' is unsupported; supported sink types: {supported}"
+        )
+
+    normalized = dict(sink)
+    normalized["type"] = sink_type
+    if sink_type == "queue" and "queue" not in normalized and "queue_url" in normalized:
+        normalized["queue"] = normalized.pop("queue_url")
+
+    allowed_fields = _COMMON_SINK_FIELDS | _SINK_ALLOWED_FIELDS[sink_type]
+    unknown_fields = set(normalized) - allowed_fields
+    if unknown_fields:
+        unknown_list = ", ".join(sorted(unknown_fields))
+        raise ValueError(
+            f"Rule {rule_id} action {action_index} sink '{sink_type}' has unsupported fields: {unknown_list}"
+        )
+
+    missing_fields = [field for field in sorted(_SINK_REQUIRED_FIELDS[sink_type]) if not normalized.get(field)]
+    if missing_fields:
+        missing_list = ", ".join(missing_fields)
+        raise ValueError(
+            f"Rule {rule_id} action {action_index} sink '{sink_type}' is missing required fields: {missing_list}"
+        )
+
+    retry_config = normalized.get("retry")
+    if retry_config is not None:
+        normalized["retry"] = _validate_retry_config(rule_id, action_index, sink_type, retry_config)
+
+    headers = normalized.get("headers")
+    if headers is not None and not isinstance(headers, dict):
+        raise ValueError(
+            f"Rule {rule_id} action {action_index} sink '{sink_type}' field 'headers' must be an object"
+        )
+
+    return normalized
+
+
 def _load_trigger(data: Dict[str, Any]) -> Trigger:
     return Trigger(
         type=data.get("type", ""),
@@ -96,15 +188,18 @@ def _load_condition(data: Dict[str, Any]) -> Condition:
     )
 
 
-def _load_actions(data: List[Dict[str, Any]]) -> List[Action]:
-    return [
-        Action(
-            severity=action["severity"],
-            message=action["message"],
-            sinks=action.get("sinks", []),
+def _load_actions(rule_id: str, data: List[Dict[str, Any]]) -> List[Action]:
+    actions: List[Action] = []
+    for index, action in enumerate(data, start=1):
+        sinks = [_normalize_sink_config(rule_id, index, sink) for sink in action.get("sinks", [])]
+        actions.append(
+            Action(
+                severity=action["severity"],
+                message=action["message"],
+                sinks=sinks,
+            )
         )
-        for action in data
-    ]
+    return actions
 
 
 def _infer_trigger(document: Dict[str, Any]) -> Dict[str, Any]:
@@ -131,6 +226,8 @@ def _infer_trigger(document: Dict[str, Any]) -> Dict[str, Any]:
 
 def load_rule_yaml(text: str) -> DeclarativeRule:
     document = yaml.safe_load(text)
+    if not isinstance(document, dict):
+        raise ValueError("Rule document must be a YAML object")
     trigger_data = _infer_trigger(document)
     return DeclarativeRule(
         rule_id=document["rule_id"],
@@ -138,7 +235,7 @@ def load_rule_yaml(text: str) -> DeclarativeRule:
         trigger=_load_trigger(trigger_data),
         sources=_load_sources(document.get("sources") or document.get("source")),
         condition=_load_condition(document.get("condition")),
-        actions=_load_actions(document.get("actions", [])),
+        actions=_load_actions(document["rule_id"], document.get("actions", [])),
         aggregations=document.get("aggregations", []),
     )
 
