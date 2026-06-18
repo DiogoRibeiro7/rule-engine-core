@@ -19,6 +19,7 @@ extended toward a fully implemented sink delivery system.
 - The core package now passes `mypy` and is checked for type regressions in CI.
 - Replay evaluation supports `event`, `window`, `absence`, `composite`, and `scheduled` triggers.
 - Unit tests assert alert behavior, timer expiry, and lookback handling.
+- Fixture-driven golden tests now lock replay JSON output for the sample scenarios.
 - A first-class sink contract now exists, with `stdout`, file, webhook, queue, and object-storage sinks implemented.
 - Declarative sink configs are validated at rule-load time and normalized onto canonical sink types.
 - Sink dispatch now supports bounded retries, configurable backoff, dead-letter recording, delivery metrics snapshots, and structured delivery logs.
@@ -33,6 +34,7 @@ extended toward a fully implemented sink delivery system.
 - `rule_engine/api.py` — lightweight embedding API for building and replaying engines from code.
 - `rule_engine/models.py` — public runtime models for alerts, metadata, evaluation results, and engine config.
 - `tests/` — unit tests for rule semantics and timing behavior.
+- `tests/fixtures/replay/` — golden replay cases and expected JSON outputs for sample scenarios.
 - `sample_rules/` — sample declarative rules used as reference fixtures.
 - `sample_data/` — NDJSON fixtures for replay-based tests and demos.
 - `docs/architecture.svg` — public-facing architecture diagram for repo pages and social sharing.

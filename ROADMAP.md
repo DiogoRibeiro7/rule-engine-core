@@ -29,6 +29,7 @@ Build a small, trustworthy declarative rule engine that:
 - Public runtime models are now separated from execution logic into clearer module boundaries.
 - Formatter/linter configuration is now defined in `pyproject.toml` and exercised in CI.
 - Type checking is now defined in `pyproject.toml` and exercised in CI for the core package.
+- Fixture-driven golden replay tests now pin sample scenario output at the JSON-report level.
 - Sink configs now validate against explicit grammar for the implemented sink types.
 - The delivery layer is executable, but production-grade backend breadth and policy depth are still incomplete.
 

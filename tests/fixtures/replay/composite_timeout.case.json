@@ -1,0 +1,9 @@
+{
+  "name": "composite-alert-with-unsupported-queue-delivery",
+  "rule_paths": [
+    "../../../sample_rules/dual_source_gap.yaml"
+  ],
+  "event_path": "../../../sample_data/dual_source_gap_events.ndjson",
+  "until": "2023-11-15T12:26:40+00:00",
+  "expected_path": "composite_timeout.expected.json"
+}

@@ -1,0 +1,97 @@
+{
+  "alerts": [
+    {
+      "entity_id": "entity-1",
+      "rule_id": "dual_source_gap",
+      "timestamp": "2023-11-15T08:28:20+00:00",
+      "alert": {
+        "severity": "warning",
+        "message": "Dual source inactivity warning for entity-1.",
+        "metadata": {
+          "rule_id": "dual_source_gap",
+          "entity_id": "entity-1",
+          "sinks": [
+            {
+              "type": "queue",
+              "queue": "alert-events"
+            }
+          ],
+          "variables": {
+            "entity_id": "entity-1",
+            "rule_id": "dual_source_gap",
+            "timestamp": "2023-11-15T08:28:20+00:00",
+            "source_alpha": {
+              "last_seen": "2023-11-14T22:43:20+00:00",
+              "duration": "9:45:00",
+              "absent": true
+            },
+            "source_beta": {
+              "last_seen": "2023-11-14T22:28:20+00:00",
+              "duration": "10:00:00",
+              "absent": true
+            },
+            "duration": "0:00:00"
+          }
+        }
+      },
+      "delivery_results": [
+        {
+          "sink_type": "queue",
+          "status": "unsupported",
+          "detail": "No adapter registered for sink type 'queue'",
+          "retryable": false,
+          "metadata": {}
+        }
+      ]
+    }
+  ],
+  "delivery_report": {
+    "alert_count": 1,
+    "delivery_metrics": {
+      "overall": {
+        "total_requests": 1,
+        "total_attempts": 0,
+        "delivered": 0,
+        "failed": 1,
+        "unsupported": 1,
+        "retryable_failures": 0,
+        "retries_attempted": 0,
+        "dead_letters": 1,
+        "total_latency_ms": 0.0,
+        "max_latency_ms": 0.0,
+        "average_latency_ms": 0.0
+      },
+      "by_sink": {
+        "queue": {
+          "total_requests": 1,
+          "total_attempts": 0,
+          "delivered": 0,
+          "failed": 1,
+          "unsupported": 1,
+          "retryable_failures": 0,
+          "retries_attempted": 0,
+          "dead_letters": 1,
+          "total_latency_ms": 0.0,
+          "max_latency_ms": 0.0,
+          "average_latency_ms": 0.0
+        }
+      }
+    },
+    "delivery_log": [
+      {
+        "sink_type": "queue",
+        "rule_id": "dual_source_gap",
+        "entity_id": "entity-1",
+        "severity": "warning",
+        "status": "unsupported",
+        "detail": "No adapter registered for sink type 'queue'",
+        "attempt_count": 0,
+        "retry_count": 0,
+        "latency_ms": 0.0,
+        "dead_lettered": true,
+        "retryable": false,
+        "metadata": {}
+      }
+    ]
+  }
+}

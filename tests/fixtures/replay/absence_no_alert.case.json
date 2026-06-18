@@ -1,0 +1,8 @@
+{
+  "name": "absence-no-alert-without-timeout-boundary",
+  "rule_paths": [
+    "../../../sample_rules/source_gap.yaml"
+  ],
+  "event_path": "../../../sample_data/source_gap_events.ndjson",
+  "expected_path": "absence_no_alert.expected.json"
+}
