@@ -80,6 +80,23 @@ def test_create_sink_registry_can_configure_dead_letter_path(tmp_path: Path):
     assert isinstance(registry.dead_letter_store, FileDeadLetterStore)
 
 
+def test_create_sink_registry_can_configure_dead_letter_retention(tmp_path: Path):
+    registry = create_sink_registry(
+        include_stdout=False,
+        include_file=False,
+        include_webhook=False,
+        include_queue=False,
+        include_object_storage=False,
+        dead_letter_path=tmp_path / "dead_letters.ndjson",
+        dead_letter_max_records=25,
+        dead_letter_fsync=True,
+    )
+
+    assert isinstance(registry.dead_letter_store, FileDeadLetterStore)
+    assert registry.dead_letter_store.max_records == 25
+    assert registry.dead_letter_store.fsync is True
+
+
 def test_create_sink_registry_can_use_custom_transports(tmp_path: Path):
     queue_transport = InMemoryQueueTransport()
     object_transport = FileObjectStorageTransport(root=tmp_path)
@@ -659,6 +676,40 @@ def test_file_dead_letter_store_writes_record(tmp_path: Path):
     content = target.read_text(encoding="utf-8")
     assert '"rule_id": "rule-1"' in content
     assert '"status": "failed"' in content
+
+
+def test_file_dead_letter_store_can_retain_only_latest_records(tmp_path: Path):
+    target = tmp_path / "dead_letters.ndjson"
+    store = FileDeadLetterStore(target, max_records=2)
+
+    for index in range(3):
+        store.record(
+            DeadLetterRecord(
+                sink_type="queue",
+                rule_id=f"rule-{index}",
+                entity_id="entity-1",
+                severity="warning",
+                message="dead",
+                timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+                payload={"x": index},
+                config={"type": "queue"},
+                result=DeliveryResult(
+                    sink_type="queue",
+                    status="failed",
+                    detail="bad",
+                    retryable=False,
+                ),
+            )
+        )
+
+    rows = [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()]
+
+    assert [row["rule_id"] for row in rows] == ["rule-1", "rule-2"]
+
+
+def test_file_dead_letter_store_rejects_non_positive_retention_limit(tmp_path: Path):
+    with pytest.raises(ValueError, match="max_records must be greater than zero"):
+        FileDeadLetterStore(tmp_path / "dead_letters.ndjson", max_records=0)
 
 
 def test_stdout_sink_delivers_message():

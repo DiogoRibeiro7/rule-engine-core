@@ -40,6 +40,8 @@ Suggested `Upgrade Notes` format:
 - Typed runtime metadata, evaluation results, and delivery reports.
 - First-class sink dispatch with retry, backoff, dead-letter, delivery metrics,
   and structured delivery logs.
+- File-backed dead-letter retention and stronger local persistence options for
+  embedding code.
 - Formatter, linter, and type-checking configuration enforced in CI.
 - Golden replay fixtures for sample scenarios.
 - Neutral multi-domain examples with checked-in sample rules and event data.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import socket
 import time
 from dataclasses import dataclass, field, replace
@@ -482,6 +483,28 @@ class DeadLetterRecord:
     config: SinkConfigLike
     result: DeliveryResult
 
+    def to_dict(self) -> Dict[str, Any]:
+        config = coerce_sink_config(self.config)
+        return {
+            "sink_type": self.sink_type,
+            "rule_id": self.rule_id,
+            "entity_id": self.entity_id,
+            "severity": self.severity,
+            "message": self.message,
+            "timestamp": self.timestamp.isoformat(),
+            "payload": self.payload,
+            "config": config.to_dict(),
+            "result": {
+                "status": self.result.status,
+                "detail": self.result.detail,
+                "retryable": self.result.retryable,
+                "metadata": dict(self.result.metadata),
+            },
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict())
+
 
 class DeadLetterStore(Protocol):
     def record(self, record: DeadLetterRecord) -> None: ...
@@ -496,30 +519,40 @@ class InMemoryDeadLetterStore:
 
 
 class FileDeadLetterStore:
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        max_records: int | None = None,
+        fsync: bool = False,
+    ) -> None:
         self.path = Path(path)
+        if max_records is not None and max_records <= 0:
+            raise ValueError("max_records must be greater than zero when provided")
+        self.max_records = max_records
+        self.fsync = fsync
 
     def record(self, record: DeadLetterRecord) -> None:
-        config = coerce_sink_config(record.config)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "sink_type": record.sink_type,
-            "rule_id": record.rule_id,
-            "entity_id": record.entity_id,
-            "severity": record.severity,
-            "message": record.message,
-            "timestamp": record.timestamp.isoformat(),
-            "payload": record.payload,
-            "config": config.to_dict(),
-            "result": {
-                "status": record.result.status,
-                "detail": record.result.detail,
-                "retryable": record.result.retryable,
-                "metadata": record.result.metadata,
-            },
-        }
         with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload) + "\n")
+            handle.write(record.to_json() + "\n")
+            handle.flush()
+            if self.fsync:
+                try:
+                    os.fsync(handle.fileno())
+                except OSError:
+                    pass
+        self._enforce_retention()
+
+    def _enforce_retention(self) -> None:
+        if self.max_records is None or not self.path.exists():
+            return
+        lines = self.path.read_text(encoding="utf-8").splitlines()
+        if len(lines) <= self.max_records:
+            return
+        retained_lines = lines[-self.max_records :]
+        content = "\n".join(retained_lines) + "\n"
+        self.path.write_text(content, encoding="utf-8")
 
 
 class SinkAdapter(Protocol):
@@ -563,10 +596,16 @@ def create_sink_registry(
     object_storage_transport: ObjectStorageTransport | None = None,
     dead_letter_store: DeadLetterStore | None = None,
     dead_letter_path: str | Path | None = None,
+    dead_letter_max_records: int | None = None,
+    dead_letter_fsync: bool = False,
 ) -> "SinkRegistry":
     resolved_dead_letter_store = dead_letter_store
     if resolved_dead_letter_store is None and dead_letter_path is not None:
-        resolved_dead_letter_store = FileDeadLetterStore(dead_letter_path)
+        resolved_dead_letter_store = FileDeadLetterStore(
+            dead_letter_path,
+            max_records=dead_letter_max_records,
+            fsync=dead_letter_fsync,
+        )
     return SinkRegistry(
         adapters=default_sink_adapters(
             include_stdout=include_stdout,

@@ -30,6 +30,7 @@ extended toward a fully implemented sink delivery system.
 - End-to-end integration tests now exercise file, queue, object-storage, and webhook sink paths, including retry/dead-letter behavior.
 - Webhook sinks now support explicit auth headers and HMAC body signing through declarative config.
 - Embedders can now create standard sink registries through helper constructors instead of manual adapter wiring.
+- File-backed dead-letter storage now supports optional bounded retention and fsync-oriented persistence for stronger local fallback handling.
 - Typed delivery reports now include convenience query helpers for per-sink metrics, failed entries, and dead-letter inspection.
 - Typed delivery metrics snapshots and evaluation results now expose structured `to_dict()`/`to_json()` exports for downstream embedding code.
 - Replay execution can now return a typed delivery report, and the CLI can emit alerts plus delivery telemetry as JSON.
@@ -76,6 +77,7 @@ What this repo is:
 - a formal declarative rule schema with fail-fast load-time validation
 - compile-time validation for trigger semantics, durations, cron syntax, and condition grammar edges
 - a delivery layer with retry, backoff, dead-letter, delivery-metrics, and structured-delivery-log primitives
+- a bounded file-backed dead-letter fallback with optional stronger local persistence semantics
 - explicit typed sink configuration objects behind the declarative YAML surface
 - a versioned delivery envelope with a deterministic idempotency key for implemented sinks
 - a replay/report surface for downstream tooling and automation
@@ -193,6 +195,8 @@ from rule_engine import build_engine_from_yaml, create_sink_registry
 
 sink_registry = create_sink_registry(
     dead_letter_path="output/dead_letters.ndjson",
+    dead_letter_max_records=1000,
+    dead_letter_fsync=True,
 )
 embedded = build_engine_from_yaml([yaml_text], sink_registry=sink_registry)
 ```

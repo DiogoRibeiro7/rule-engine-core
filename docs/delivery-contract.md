@@ -200,3 +200,30 @@ Example failure metadata for a retryable webhook error:
   ]
 }
 ```
+
+## Dead-Letter Persistence
+
+Dead-letter recording is intentionally narrow in this repo: it is a local
+fallback, not a full operational archive.
+
+Available stores:
+
+- `InMemoryDeadLetterStore` for tests and ephemeral embedding flows
+- `FileDeadLetterStore` for newline-delimited JSON persistence on local disk
+
+`FileDeadLetterStore` options:
+
+- `path` — target NDJSON file
+- `max_records` — optional retention cap; when set, only the newest records are
+  retained after each write
+- `fsync` — optional durability hint for callers that want each write flushed to
+  disk before returning
+
+Retention guidance:
+
+- Use `max_records` when the dead-letter file is acting as a bounded retry or
+  triage buffer rather than a historical archive.
+- Keep long-term retention, compaction, shipping, and alerting in downstream
+  wrappers or infrastructure outside this core package.
+- Treat `fsync=True` as a stronger durability option for lower-throughput local
+  fallback paths, not as a substitute for replicated storage.

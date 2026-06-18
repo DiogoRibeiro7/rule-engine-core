@@ -83,12 +83,18 @@ from rule_engine import build_engine_from_yaml, create_sink_registry
 
 sink_registry = create_sink_registry(
     dead_letter_path="output/dead_letters.ndjson",
+    dead_letter_max_records=1000,
+    dead_letter_fsync=True,
 )
 embedded = build_engine_from_yaml(
     [yaml_text],
     sink_registry=sink_registry,
 )
 ```
+
+Use `dead_letter_max_records` to cap local retention when the file is only a
+fallback buffer and `dead_letter_fsync=True` when you prefer stronger
+single-process durability over write throughput.
 
 ## 5. Override Specific Transports
 
