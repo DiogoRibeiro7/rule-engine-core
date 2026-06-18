@@ -1,6 +1,8 @@
 from .decorators import event_rule, scheduled_rule, window_rule
 from .engine import RuleEngine
 from .sinks import (
+    DeliveryMetrics,
+    DeliveryMetricsSnapshot,
     DeadLetterRecord,
     DeadLetterStore,
     DeliveryRequest,
@@ -28,6 +30,8 @@ __all__ = [
     "DeadLetterStore",
     "DeliveryRequest",
     "DeliveryResult",
+    "DeliveryMetrics",
+    "DeliveryMetricsSnapshot",
     "EntityWindow",
     "FileDeadLetterStore",
     "FileSink",

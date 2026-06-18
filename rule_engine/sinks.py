@@ -32,6 +32,24 @@ class DeliveryResult:
 
 
 @dataclass(frozen=True)
+class DeliveryMetrics:
+    total_requests: int = 0
+    total_attempts: int = 0
+    delivered: int = 0
+    failed: int = 0
+    unsupported: int = 0
+    retryable_failures: int = 0
+    retries_attempted: int = 0
+    dead_letters: int = 0
+
+
+@dataclass(frozen=True)
+class DeliveryMetricsSnapshot:
+    overall: DeliveryMetrics
+    by_sink: Dict[str, DeliveryMetrics]
+
+
+@dataclass(frozen=True)
 class RetryPolicy:
     max_attempts: int = 1
     base_delay_s: float = 0.0
@@ -132,6 +150,8 @@ class SinkRegistry:
     ):
         self._adapters: Dict[str, SinkAdapter] = {}
         self.dead_letter_store = dead_letter_store
+        self._overall_metrics = DeliveryMetrics()
+        self._sink_metrics: Dict[str, DeliveryMetrics] = {}
         for adapter in adapters or []:
             self.register(adapter)
 
@@ -141,9 +161,25 @@ class SinkRegistry:
     def get(self, sink_type: str) -> SinkAdapter | None:
         return self._adapters.get(sink_type)
 
+    def metrics(self) -> DeliveryMetricsSnapshot:
+        return DeliveryMetricsSnapshot(
+            overall=self._overall_metrics,
+            by_sink=dict(self._sink_metrics),
+        )
+
+    def reset_metrics(self) -> None:
+        self._overall_metrics = DeliveryMetrics()
+        self._sink_metrics = {}
+
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
+        self._increment_metrics(request.sink_type, total_requests=1)
         adapter = self.get(request.sink_type)
         if adapter is None:
+            self._increment_metrics(
+                request.sink_type,
+                failed=1,
+                unsupported=1,
+            )
             result = DeliveryResult(
                 sink_type=request.sink_type,
                 status="unsupported",
@@ -157,17 +193,27 @@ class SinkRegistry:
         backoff_schedule: List[float] = []
         for attempt in range(1, retry_policy.max_attempts + 1):
             result = adapter.deliver(request)
+            result_is_delivered = result.status == "delivered"
+            result_is_retryable_failure = result.status != "delivered" and result.retryable
+            self._increment_metrics(
+                request.sink_type,
+                total_attempts=1,
+                delivered=1 if result_is_delivered else 0,
+                failed=0 if result_is_delivered else 1,
+                retryable_failures=1 if result_is_retryable_failure else 0,
+            )
             result.metadata.setdefault("attempt", attempt)
             result.metadata.setdefault("max_attempts", retry_policy.max_attempts)
             result.metadata.setdefault("backoff_schedule_s", list(backoff_schedule))
             last_result = result
-            if result.status == "delivered":
+            if result_is_delivered:
                 return result
             if not result.retryable:
                 break
             if attempt < retry_policy.max_attempts:
                 delay = retry_policy.backoff_delay(attempt + 1)
                 backoff_schedule.append(delay)
+                self._increment_metrics(request.sink_type, retries_attempted=1)
                 if retry_policy.sleep_enabled and delay > 0:
                     time.sleep(delay)
 
@@ -178,6 +224,7 @@ class SinkRegistry:
     def _record_dead_letter(
         self, request: DeliveryRequest, result: DeliveryResult
     ) -> None:
+        self._increment_metrics(request.sink_type, dead_letters=1)
         if self.dead_letter_store is None:
             return
         self.dead_letter_store.record(
@@ -193,6 +240,21 @@ class SinkRegistry:
                 result=result,
             )
         )
+
+    def _increment_metrics(self, sink_type: str, **increments: int) -> None:
+        self._overall_metrics = self._merge_metrics(self._overall_metrics, increments)
+        current = self._sink_metrics.get(sink_type, DeliveryMetrics())
+        self._sink_metrics[sink_type] = self._merge_metrics(current, increments)
+
+    @staticmethod
+    def _merge_metrics(
+        current: DeliveryMetrics,
+        increments: Dict[str, int],
+    ) -> DeliveryMetrics:
+        values = current.__dict__.copy()
+        for key, amount in increments.items():
+            values[key] = values.get(key, 0) + amount
+        return DeliveryMetrics(**values)
 
 
 class StdoutSink:

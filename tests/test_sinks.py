@@ -251,6 +251,121 @@ def test_sink_registry_records_dead_letter_after_final_failure():
     assert dead_letters.records[0].rule_id == "rule-1"
 
 
+def test_sink_registry_reports_delivery_metrics_summary():
+    class FlakySink:
+        sink_type = "flaky"
+
+        def __init__(self):
+            self.calls = 0
+
+        def deliver(self, request):
+            self.calls += 1
+            if self.calls == 1:
+                return DeliveryResult(
+                    sink_type="flaky",
+                    status="failed",
+                    detail="temporary",
+                    retryable=True,
+                )
+            return DeliveryResult(
+                sink_type="flaky",
+                status="delivered",
+                detail="ok",
+            )
+
+    class FailingSink:
+        sink_type = "failing"
+
+        def deliver(self, request):
+            return DeliveryResult(
+                sink_type="failing",
+                status="failed",
+                detail="still failing",
+                retryable=False,
+            )
+
+    registry = SinkRegistry(adapters=[FlakySink(), FailingSink()])
+    registry.deliver(
+        DeliveryRequest(
+            sink_type="flaky",
+            rule_id="rule-1",
+            entity_id="entity-1",
+            severity="warning",
+            message="hello",
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            payload={},
+            config={"type": "flaky", "retry": {"max_attempts": 2, "base_delay_s": 0.25}},
+        )
+    )
+    registry.deliver(
+        DeliveryRequest(
+            sink_type="failing",
+            rule_id="rule-2",
+            entity_id="entity-2",
+            severity="critical",
+            message="bad",
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            payload={},
+            config={"type": "failing"},
+        )
+    )
+    registry.deliver(
+        DeliveryRequest(
+            sink_type="missing",
+            rule_id="rule-3",
+            entity_id="entity-3",
+            severity="info",
+            message="missing",
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            payload={},
+            config={"type": "missing"},
+        )
+    )
+
+    snapshot = registry.metrics()
+
+    assert snapshot.overall.total_requests == 3
+    assert snapshot.overall.total_attempts == 3
+    assert snapshot.overall.delivered == 1
+    assert snapshot.overall.failed == 3
+    assert snapshot.overall.retryable_failures == 1
+    assert snapshot.overall.retries_attempted == 1
+    assert snapshot.overall.dead_letters == 2
+    assert snapshot.overall.unsupported == 1
+
+    assert snapshot.by_sink["flaky"].total_requests == 1
+    assert snapshot.by_sink["flaky"].total_attempts == 2
+    assert snapshot.by_sink["flaky"].delivered == 1
+    assert snapshot.by_sink["flaky"].failed == 1
+    assert snapshot.by_sink["flaky"].retries_attempted == 1
+
+    assert snapshot.by_sink["failing"].dead_letters == 1
+    assert snapshot.by_sink["missing"].unsupported == 1
+
+
+def test_sink_registry_can_reset_delivery_metrics():
+    registry = SinkRegistry()
+    registry.deliver(
+        DeliveryRequest(
+            sink_type="missing",
+            rule_id="rule-1",
+            entity_id="entity-1",
+            severity="info",
+            message="hello",
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            payload={},
+            config={"type": "missing"},
+        )
+    )
+
+    registry.reset_metrics()
+    snapshot = registry.metrics()
+
+    assert snapshot.overall.total_requests == 0
+    assert snapshot.overall.dead_letters == 0
+    assert snapshot.by_sink == {}
+
+
 def test_file_dead_letter_store_writes_record(tmp_path: Path):
     target = tmp_path / "dead_letters.ndjson"
     store = FileDeadLetterStore(target)
