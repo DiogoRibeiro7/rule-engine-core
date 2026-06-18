@@ -486,9 +486,9 @@ def _evaluate_operands(operator: Optional[str], operands: List[Operand], values:
     return all(results)
 
 
-class DeclarativeEngine:
-    def __init__(self, rules: Iterable[DeclarativeRule]):
-        self.rules = [CompiledRule.from_declarative(rule) for rule in rules]
+class CompiledEngine:
+    def __init__(self, rules: Iterable[CompiledRule]):
+        self.rules = list(rules)
         self._rule_map = {rule.rule_id: rule for rule in self.rules}
         self._entities: Dict[str, Dict[str, RuleState]] = {}
         self._watermark: Optional[datetime] = None
@@ -851,3 +851,8 @@ class DeclarativeEngine:
         state.buffered_events = [event for event in state.buffered_events if event.timestamp >= cutoff]
         if rule.trigger_type == "window" and state.next_window_end is None and rule.slide is not None:
             state.next_window_end = _align_window_end(now, rule.slide)
+
+
+class DeclarativeEngine(CompiledEngine):
+    def __init__(self, rules: Iterable[DeclarativeRule]):
+        super().__init__([CompiledRule.from_declarative(rule) for rule in rules])

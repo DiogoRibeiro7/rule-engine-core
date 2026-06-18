@@ -11,6 +11,7 @@ extended toward a fully implemented sink delivery system.
 - Canonical runtime model: keyed execution with domain-specific identifiers supplied by the caller.
 - Entities are keyed by caller-supplied identifiers, with `rule_id` used as the per-rule namespace.
 - Declarative rules now compile into executable in-memory runtime objects.
+- Compile-time rule loading is now separated from execution through `rule_engine.compiler` and `CompiledEngine`.
 - Declarative rules are schema-validated at load time with path-aware errors for malformed YAML and bad field shapes.
 - Trigger fields, condition operators, duration values, and cron expressions are validated before execution.
 - Replay evaluation supports `event`, `window`, `absence`, `composite`, and `scheduled` triggers.
@@ -25,6 +26,7 @@ extended toward a fully implemented sink delivery system.
 ## Repository layout
 
 - `rule_engine/` — generic Python reference implementation.
+- `rule_engine/compiler.py` — compile-time API for turning declarative rules into executable runtime objects.
 - `tests/` — unit tests for rule semantics and timing behavior.
 - `sample_rules/` — sample declarative rules used as reference fixtures.
 - `sample_data/` — NDJSON fixtures for replay-based tests and demos.
@@ -40,6 +42,7 @@ What this repo is:
 
 - a core rule-evaluation runtime
 - a declarative YAML rule compiler/executor
+- a compile/runtime split that supports embedding compiled rules without going through the CLI
 - a replay engine for deterministic testing and validation
 - the base for sink delivery adapters, with `stdout`, file, webhook, queue, and object-storage support already present
 - an explicit sink configuration grammar with canonical sink names
@@ -97,6 +100,18 @@ Emit the declarative rule schema as JSON:
 
 ```bash
 python -m rule_engine.runner --rule-schema
+```
+
+Embed the runtime from Python using the compile/runtime split:
+
+```python
+from rule_engine.compiler import compile_rule
+from rule_engine.declarative import load_rule_yaml
+from rule_engine.runtime import CompiledEngine
+
+compiled_rule = compile_rule(load_rule_yaml(yaml_text))
+engine = CompiledEngine([compiled_rule])
+alerts = engine.replay(events)
 ```
 
 ## Supported Language

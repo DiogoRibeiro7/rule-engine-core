@@ -7,8 +7,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from .compiler import compile_rule, load_and_compile_rule_files
 from .declarative import DeclarativeRule, get_rule_schema, load_rule_file
-from .runtime import CompiledRule, DeclarativeEngine, EmittedAlert, ReplayDeliveryReport
+from .runtime import CompiledEngine, CompiledRule, DeclarativeEngine, EmittedAlert, ReplayDeliveryReport
 from .types import SensorEvent
 
 
@@ -25,7 +26,7 @@ class RuntimeRule:
 
     @classmethod
     def from_declarative(cls, rule: DeclarativeRule) -> "RuntimeRule":
-        compiled = CompiledRule.from_declarative(rule)
+        compiled = compile_rule(rule)
         return cls(
             rule_id=compiled.rule_id,
             description=compiled.description,
@@ -87,6 +88,10 @@ def load_declarative_rules(paths: Iterable[Path]) -> List[RuntimeRule]:
     return [RuntimeRule.from_declarative(rule) for rule in load_rule_documents(paths)]
 
 
+def load_compiled_rules(paths: Iterable[Path]) -> List[CompiledRule]:
+    return load_and_compile_rule_files(paths)
+
+
 def emit_json_model(rules: List[RuntimeRule]) -> str:
     return json.dumps([rule.to_dict() for rule in rules], indent=2)
 
@@ -113,18 +118,18 @@ def load_ndjson_events(path: Path) -> List[SensorEvent]:
 def replay_events(
     rule_paths: List[Path], event_path: Path, until: Optional[datetime] = None
 ) -> List[EmittedAlert]:
-    rules = load_rule_documents(rule_paths)
+    rules = load_compiled_rules(rule_paths)
     events = load_ndjson_events(event_path)
-    engine = DeclarativeEngine(rules)
+    engine = CompiledEngine(rules)
     return engine.replay(events, until=until)
 
 
 def replay_events_with_report(
     rule_paths: List[Path], event_path: Path, until: Optional[datetime] = None
 ) -> tuple[List[EmittedAlert], ReplayDeliveryReport]:
-    rules = load_rule_documents(rule_paths)
+    rules = load_compiled_rules(rule_paths)
     events = load_ndjson_events(event_path)
-    engine = DeclarativeEngine(rules)
+    engine = CompiledEngine(rules)
     return engine.replay_with_report(events, until=until)
 
 

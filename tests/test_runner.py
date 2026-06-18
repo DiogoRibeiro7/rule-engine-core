@@ -14,7 +14,8 @@ from rule_engine.runner import (
     replay_events,
     replay_events_with_report,
 )
-from rule_engine.runtime import DeclarativeEngine
+from rule_engine.compiler import compile_rule, load_and_compile_rule_files
+from rule_engine.runtime import CompiledEngine, DeclarativeEngine
 from rule_engine.types import SensorEvent
 
 
@@ -35,6 +36,18 @@ def test_loads_runtime_metadata_for_sample_rule():
     assert runtime_rule.trigger_type == "absence"
     assert runtime_rule.entity_id_filter == "*"
     assert runtime_rule.sensor_types == ["source_alpha"]
+
+
+def test_load_and_compile_rule_files_returns_compiled_rules():
+    rule_path = (
+        Path(__file__).resolve().parents[1] / "sample_rules" / "source_gap.yaml"
+    )
+
+    compiled_rules = load_and_compile_rule_files([rule_path])
+
+    assert len(compiled_rules) == 1
+    assert compiled_rules[0].rule_id == "source_gap_48h"
+    assert compiled_rules[0].trigger_type == "absence"
 
 
 def test_generate_json_schema_has_runtime_rule_structure():
@@ -142,6 +155,45 @@ actions:
     )
 
     assert len(alerts) == 1
+    assert alerts[0].alert.message == "Primary source spike for entity-1: 185.0"
+
+
+def test_compiled_engine_replays_compiled_rules():
+    yaml_text = """
+rule_id: source_primary_spike
+description: Event spike
+trigger:
+  type: event
+sources:
+  - sensor_type: source_primary
+    entity_id: "*"
+condition:
+  operator: AND
+  operands:
+    - metric: value
+      operator: gt
+      value: 180
+actions:
+  - severity: critical
+    message: "Primary source spike for {{entity_id}}: {{value}}"
+    sinks: []
+"""
+    compiled_rule = compile_rule(load_rule_yaml(yaml_text))
+    engine = CompiledEngine([compiled_rule])
+
+    alerts = engine.replay(
+        [
+            SensorEvent(
+                entity_id="entity-1",
+                sensor_type="source_primary",
+                value=185.0,
+                timestamp_ms=_ts(2024, 1, 1, 0, 0),
+            )
+        ]
+    )
+
+    assert len(alerts) == 1
+    assert alerts[0].rule_id == "source_primary_spike"
     assert alerts[0].alert.message == "Primary source spike for entity-1: 185.0"
 
 

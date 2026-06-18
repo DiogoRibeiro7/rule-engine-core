@@ -1,3 +1,9 @@
+from .compiler import (
+    compile_rule,
+    compile_rules,
+    load_and_compile_rule_file,
+    load_and_compile_rule_files,
+)
 from .decorators import event_rule, scheduled_rule, window_rule
 from .engine import RuleEngine
 from .sinks import (
@@ -22,12 +28,13 @@ from .sinks import (
     StdoutSink,
     WebhookSink,
 )
-from .runtime import ReplayDeliveryReport
+from .runtime import CompiledEngine, ReplayDeliveryReport
 from .types import Alert, RuleContext, SensorEvent, StoreRecord
 from .window import EntityWindow
 
 __all__ = [
     "Alert",
+    "CompiledEngine",
     "DeadLetterRecord",
     "DeadLetterStore",
     "DeliveryRequest",
@@ -54,7 +61,11 @@ __all__ = [
     "StdoutSink",
     "WebhookSink",
     "RuleEngine",
+    "compile_rule",
+    "compile_rules",
     "event_rule",
+    "load_and_compile_rule_file",
+    "load_and_compile_rule_files",
     "window_rule",
     "scheduled_rule",
 ]
