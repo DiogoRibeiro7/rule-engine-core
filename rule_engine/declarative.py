@@ -16,7 +16,16 @@ _COMMON_SINK_FIELDS = {"type", "retry"}
 _SINK_ALLOWED_FIELDS = {
     "stdout": set(),
     "file": {"path"},
-    "webhook": {"url", "timeout_s", "headers", "method"},
+    "webhook": {
+        "url",
+        "timeout_s",
+        "headers",
+        "method",
+        "auth_token",
+        "auth_scheme",
+        "signature_secret",
+        "signature_header",
+    },
     "queue": {"queue", "retryable"},
     "object_storage": {"bucket", "prefix", "extension", "retryable"},
 }

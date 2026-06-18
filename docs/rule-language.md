@@ -282,6 +282,10 @@ Supported fields:
 - `timeout_s`
 - `headers`
 - `method`
+- `auth_token`
+- `auth_scheme`
+- `signature_secret`
+- `signature_header`
 - `retry`
 
 ### `queue`

@@ -161,6 +161,37 @@ actions:
         load_rule_yaml(yaml_text)
 
 
+def test_load_rule_accepts_webhook_auth_and_signing_fields():
+    yaml_text = """
+rule_id: webhook_auth_rule
+description: signed webhook
+trigger:
+  type: event
+sources:
+  - sensor_type: source_primary
+    entity_id: "*"
+condition:
+  operator: AND
+actions:
+  - severity: warning
+    message: "signed"
+    sinks:
+      - type: webhook
+        url: https://example.test/hook
+        auth_token: secret-token
+        auth_scheme: Token
+        signature_secret: signing-secret
+        signature_header: X-Test-Signature
+"""
+    rule = load_rule_yaml(yaml_text)
+
+    sink = rule.actions[0].sinks[0]
+    assert sink["auth_token"] == "secret-token"
+    assert sink["auth_scheme"] == "Token"
+    assert sink["signature_secret"] == "signing-secret"
+    assert sink["signature_header"] == "X-Test-Signature"
+
+
 def test_get_rule_schema_exposes_required_top_level_fields():
     schema = get_rule_schema()
 

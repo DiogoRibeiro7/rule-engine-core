@@ -94,6 +94,12 @@ Example line written to disk:
 
 - Output shape: JSON envelope as HTTP request body
 - Timeout handling: `timeout_s` per request
+- Optional auth support:
+  - `auth_token`
+  - `auth_scheme` with default `Bearer`
+- Optional request signing support:
+  - `signature_secret`
+  - `signature_header` with default `X-Signature-256`
 - Idempotency expectation: downstream webhook should treat `idempotency_key` as
   the deduplication token if it needs exactly-once behavior
 - Failure model:
@@ -109,6 +115,13 @@ Success metadata example:
   "status_code": 202,
   "url": "https://example.test/hook"
 }
+```
+
+Header example with auth and signing enabled:
+
+```text
+Authorization: Token secret-token
+X-Test-Signature: sha256=<hmac of request body>
 ```
 
 ### `queue`

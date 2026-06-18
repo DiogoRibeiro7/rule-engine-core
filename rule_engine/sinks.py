@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import socket
 import time
@@ -77,18 +78,29 @@ class WebhookSinkConfig:
     timeout_s: float = 5.0
     headers: Dict[str, str] = field(default_factory=dict)
     method: str = "POST"
+    auth_token: str | None = None
+    auth_scheme: str = "Bearer"
+    signature_secret: str | None = None
+    signature_header: str = "X-Signature-256"
     type: str = "webhook"
     retry: RetryConfig = field(default_factory=RetryConfig)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "type": self.type,
             "url": self.url,
             "timeout_s": self.timeout_s,
             "headers": dict(self.headers),
             "method": self.method,
+            "auth_scheme": self.auth_scheme,
+            "signature_header": self.signature_header,
             "retry": self.retry.to_dict(),
         }
+        if self.auth_token is not None:
+            data["auth_token"] = self.auth_token
+        if self.signature_secret is not None:
+            data["signature_secret"] = self.signature_secret
+        return data
 
 
 @dataclass(frozen=True)
@@ -166,6 +178,16 @@ def parse_sink_config(config: Dict[str, Any]) -> AnySinkConfig:
             timeout_s=float(config.get("timeout_s", 5.0)),
             headers={str(key): str(value) for key, value in headers.items()},
             method=str(config.get("method", "POST")).upper(),
+            auth_token=(
+                str(config.get("auth_token")) if config.get("auth_token") is not None else None
+            ),
+            auth_scheme=str(config.get("auth_scheme", "Bearer")),
+            signature_secret=(
+                str(config.get("signature_secret"))
+                if config.get("signature_secret") is not None
+                else None
+            ),
+            signature_header=str(config.get("signature_header", "X-Signature-256")),
             retry=retry,
         )
     if sink_type == "queue":
@@ -341,6 +363,11 @@ def _payload_metadata(payload: DeliveryPayload, **extra: Any) -> Dict[str, Any]:
     }
     metadata.update(extra)
     return metadata
+
+
+def _webhook_signature(secret: str, body: bytes) -> str:
+    digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    return f"sha256={digest}"
 
 
 @dataclass(frozen=True)
@@ -746,6 +773,10 @@ class WebhookSink:
         body = payload.to_json().encode("utf-8")
         headers = {"Content-Type": "application/json"}
         headers.update(config.headers)
+        if config.auth_token:
+            headers["Authorization"] = f"{config.auth_scheme} {config.auth_token}"
+        if config.signature_secret:
+            headers[config.signature_header] = _webhook_signature(config.signature_secret, body)
         method = config.method
         http_request = request.Request(
             url=config.url,

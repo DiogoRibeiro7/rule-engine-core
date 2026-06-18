@@ -132,6 +132,10 @@ def test_parse_sink_config_returns_typed_config():
             "timeout_s": 2.5,
             "headers": {"X-Test": "1"},
             "method": "put",
+            "auth_token": "secret-token",
+            "auth_scheme": "Token",
+            "signature_secret": "signing-secret",
+            "signature_header": "X-Test-Signature",
             "retry": {"max_attempts": 3},
         }
     )
@@ -141,6 +145,10 @@ def test_parse_sink_config_returns_typed_config():
     assert config.timeout_s == 2.5
     assert config.headers == {"X-Test": "1"}
     assert config.method == "PUT"
+    assert config.auth_token == "secret-token"
+    assert config.auth_scheme == "Token"
+    assert config.signature_secret == "signing-secret"
+    assert config.signature_header == "X-Test-Signature"
     assert config.retry.max_attempts == 3
 
 
@@ -715,6 +723,7 @@ def test_webhook_sink_delivers_successfully():
     def fake_urlopen(http_request, timeout):
         captured_request["body"] = http_request.data.decode("utf-8")
         captured_request["timeout"] = timeout
+        captured_request["headers"] = dict(http_request.header_items())
         return FakeResponse()
 
     with patch("rule_engine.sinks.request.urlopen", side_effect=fake_urlopen):
@@ -727,7 +736,14 @@ def test_webhook_sink_delivers_successfully():
                 message="sent",
                 timestamp=datetime(2024, 1, 1, tzinfo=UTC),
                 payload={},
-                config={"type": "webhook", "url": "https://example.test/hook"},
+                config={
+                    "type": "webhook",
+                    "url": "https://example.test/hook",
+                    "auth_token": "secret-token",
+                    "auth_scheme": "Token",
+                    "signature_secret": "signing-secret",
+                    "signature_header": "X-Test-Signature",
+                },
             )
         )
 
@@ -738,6 +754,8 @@ def test_webhook_sink_delivers_successfully():
     assert payload["sink_type"] == "webhook"
     assert payload["entity_id"] == "entity-1"
     assert captured_request["timeout"] == 5.0
+    assert captured_request["headers"]["Authorization"] == "Token secret-token"
+    assert str(captured_request["headers"]["X-test-signature"]).startswith("sha256=")
 
 
 def test_webhook_sink_marks_4xx_as_terminal_failure():
