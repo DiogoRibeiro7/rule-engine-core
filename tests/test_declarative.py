@@ -1,6 +1,6 @@
 import pytest
 
-from rule_engine.declarative import load_rule_yaml
+from rule_engine.declarative import get_rule_schema, load_rule_yaml
 
 
 def test_load_simple_absence_rule():
@@ -158,5 +158,79 @@ actions:
         url: https://example.test/not-allowed
 """
     with pytest.raises(ValueError, match="unsupported fields: url"):
+        load_rule_yaml(yaml_text)
+
+
+def test_get_rule_schema_exposes_required_top_level_fields():
+    schema = get_rule_schema()
+
+    assert schema["type"] == "object"
+    assert "rule_id" in schema["required"]
+    assert "actions" in schema["required"]
+    assert "sources" in schema["properties"]
+
+
+def test_load_rule_rejects_invalid_yaml():
+    yaml_text = """
+rule_id: broken_rule
+actions:
+  - severity: warning
+    message: "oops"
+    sinks: [
+"""
+    with pytest.raises(ValueError, match="Invalid YAML rule document"):
+        load_rule_yaml(yaml_text)
+
+
+def test_load_rule_rejects_missing_required_rule_id():
+    yaml_text = """
+description: missing id
+sources:
+  - sensor_type: source_primary
+actions:
+  - severity: warning
+    message: "bad"
+"""
+    with pytest.raises(ValueError, match="rule is missing required field 'rule_id'"):
+        load_rule_yaml(yaml_text)
+
+
+def test_load_rule_rejects_missing_sources_definition():
+    yaml_text = """
+rule_id: bad_rule
+actions:
+  - severity: warning
+    message: "bad"
+"""
+    with pytest.raises(ValueError, match="must define either 'source' or 'sources'"):
+        load_rule_yaml(yaml_text)
+
+
+def test_load_rule_rejects_unknown_top_level_fields():
+    yaml_text = """
+rule_id: bad_rule
+sources:
+  - sensor_type: source_primary
+actions:
+  - severity: warning
+    message: "bad"
+extra_field: true
+"""
+    with pytest.raises(ValueError, match="rule has unsupported fields: extra_field"):
+        load_rule_yaml(yaml_text)
+
+
+def test_load_rule_rejects_invalid_trigger_type():
+    yaml_text = """
+rule_id: bad_rule
+trigger:
+  type: stream
+sources:
+  - sensor_type: source_primary
+actions:
+  - severity: warning
+    message: "bad"
+"""
+    with pytest.raises(ValueError, match="rule.trigger.type must be one of"):
         load_rule_yaml(yaml_text)
 

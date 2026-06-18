@@ -7,6 +7,7 @@ from rule_engine.runner import (
     emit_replay_report_json,
     RuntimeRule,
     generate_json_schema,
+    generate_rule_json_schema,
     load_declarative_rules,
     replay_events,
     replay_events_with_report,
@@ -41,6 +42,14 @@ def test_generate_json_schema_has_runtime_rule_structure():
     assert schema["items"]["type"] == "object"
     assert "rule_id" in schema["items"]["properties"]
     assert "trigger_type" in schema["items"]["properties"]
+
+
+def test_generate_rule_json_schema_has_declarative_rule_structure():
+    schema = generate_rule_json_schema()
+
+    assert schema["type"] == "object"
+    assert "rule_id" in schema["properties"]
+    assert "actions" in schema["properties"]
 
 
 def test_replay_absence_fixture_emits_no_alert_without_timeout_boundary():

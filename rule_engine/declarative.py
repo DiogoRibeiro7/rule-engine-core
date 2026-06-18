@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -33,6 +34,114 @@ _RETRY_ALLOWED_FIELDS = {
     "multiplier",
     "max_delay_s",
     "sleep",
+}
+_DECLARATIVE_RULE_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "required": ["rule_id", "actions"],
+    "properties": {
+        "rule_id": {"type": "string"},
+        "description": {"type": "string"},
+        "trigger": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "enum": ["event", "window", "absence", "composite", "scheduled"],
+                },
+                "duration": {"type": "string"},
+                "slide": {"type": "string"},
+                "timeout": {"type": "string"},
+                "cron": {"type": "string"},
+                "lookback": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+        "sources": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "required": ["sensor_type"],
+                "properties": {
+                    "sensor_type": {"type": "string"},
+                    "entity_id": {"type": "string"},
+                    "trigger": {
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["absence"],
+                            },
+                            "timeout": {"type": "string"},
+                        },
+                        "additionalProperties": False,
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+        "source": {
+            "type": "object",
+            "required": ["sensor_type"],
+            "properties": {
+                "sensor_type": {"type": "string"},
+                "entity_id": {"type": "string"},
+                "trigger": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["absence"],
+                        },
+                        "timeout": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            "additionalProperties": False,
+        },
+        "condition": {
+            "type": "object",
+            "properties": {
+                "operator": {"type": "string"},
+                "metric": {"type": "string"},
+                "value": {},
+                "operands": {"type": "array"},
+            },
+            "additionalProperties": False,
+        },
+        "actions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "required": ["severity", "message"],
+                "properties": {
+                    "severity": {"type": "string"},
+                    "message": {"type": "string"},
+                    "sinks": {"type": "array"},
+                },
+                "additionalProperties": False,
+            },
+        },
+        "aggregations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["id", "function"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "function": {"type": "string"},
+                    "field": {"type": "string"},
+                    "input": {"type": "string"},
+                    "percentile": {"type": "number"},
+                    "sub_window": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    "additionalProperties": False,
 }
 
 
@@ -85,6 +194,84 @@ class DeclarativeRule:
         if self.trigger.type in {"window", "absence", "composite"}:
             return "@window_rule"
         return "unknown"
+
+
+def get_rule_schema() -> Dict[str, Any]:
+    return deepcopy(_DECLARATIVE_RULE_SCHEMA)
+
+
+def _schema_path(path: str, key: str) -> str:
+    return f"{path}.{key}" if path else key
+
+
+def _type_name(value: Any) -> str:
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return "number"
+    if value is None:
+        return "null"
+    return type(value).__name__
+
+
+def _matches_schema_type(value: Any, expected: str) -> bool:
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    return True
+
+
+def _validate_schema(value: Any, schema: Dict[str, Any], path: str = "rule") -> None:
+    expected_type = schema.get("type")
+    if expected_type and not _matches_schema_type(value, expected_type):
+        raise ValueError(
+            f"{path} must be a {expected_type}, got {_type_name(value)}"
+        )
+
+    allowed_enum = schema.get("enum")
+    if allowed_enum is not None and value not in allowed_enum:
+        options = ", ".join(str(option) for option in allowed_enum)
+        raise ValueError(f"{path} must be one of: {options}")
+
+    if expected_type == "object":
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        for key in required:
+            if key not in value:
+                raise ValueError(
+                    f"{path} is missing required field '{key}'"
+                )
+        if schema.get("additionalProperties", True) is False:
+            unknown_fields = set(value) - set(properties)
+            if unknown_fields:
+                field_list = ", ".join(sorted(unknown_fields))
+                raise ValueError(f"{path} has unsupported fields: {field_list}")
+        for key, field_schema in properties.items():
+            if key in value and field_schema:
+                _validate_schema(value[key], field_schema, _schema_path(path, key))
+        return
+
+    if expected_type == "array":
+        min_items = schema.get("minItems")
+        if min_items is not None and len(value) < min_items:
+            raise ValueError(f"{path} must contain at least {min_items} item(s)")
+        item_schema = schema.get("items")
+        if item_schema:
+            for index, item in enumerate(value):
+                _validate_schema(item, item_schema, f"{path}[{index}]")
 
 
 def _validate_retry_config(rule_id: str, action_index: int, sink_type: str, value: Any) -> Dict[str, Any]:
@@ -224,10 +411,22 @@ def _infer_trigger(document: Dict[str, Any]) -> Dict[str, Any]:
     return {}
 
 
+def _validate_rule_document(document: Dict[str, Any]) -> None:
+    _validate_schema(document, _DECLARATIVE_RULE_SCHEMA)
+    if "source" in document and "sources" in document:
+        raise ValueError("rule cannot define both 'source' and 'sources'")
+    if "source" not in document and "sources" not in document:
+        raise ValueError("rule must define either 'source' or 'sources'")
+
+
 def load_rule_yaml(text: str) -> DeclarativeRule:
-    document = yaml.safe_load(text)
+    try:
+        document = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid YAML rule document: {exc}") from exc
     if not isinstance(document, dict):
         raise ValueError("Rule document must be a YAML object")
+    _validate_rule_document(document)
     trigger_data = _infer_trigger(document)
     return DeclarativeRule(
         rule_id=document["rule_id"],

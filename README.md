@@ -11,6 +11,7 @@ extended toward a fully implemented sink delivery system.
 - Canonical runtime model: keyed execution with domain-specific identifiers supplied by the caller.
 - Entities are keyed by caller-supplied identifiers, with `rule_id` used as the per-rule namespace.
 - Declarative rules now compile into executable in-memory runtime objects.
+- Declarative rules are schema-validated at load time with path-aware errors for malformed YAML and bad field shapes.
 - Replay evaluation supports `event`, `window`, `absence`, `composite`, and `scheduled` triggers.
 - Unit tests assert alert behavior, timer expiry, and lookback handling.
 - A first-class sink contract now exists, with `stdout`, file, webhook, queue, and object-storage sinks implemented.
@@ -40,6 +41,7 @@ What this repo is:
 - a replay engine for deterministic testing and validation
 - the base for sink delivery adapters, with `stdout`, file, webhook, queue, and object-storage support already present
 - an explicit sink configuration grammar with canonical sink names
+- a formal declarative rule schema with fail-fast load-time validation
 - a delivery layer with retry, backoff, dead-letter, delivery-metrics, and structured-delivery-log primitives
 - a replay/report surface for downstream tooling and automation
 
@@ -86,6 +88,12 @@ Emit replay alerts together with the delivery report as JSON:
 
 ```bash
 python -m rule_engine.runner sample_rules/dual_source_gap.yaml --events sample_data/dual_source_gap_events.ndjson --until 2023-11-15T12:26:40+00:00 --delivery-report-json
+```
+
+Emit the declarative rule schema as JSON:
+
+```bash
+python -m rule_engine.runner --rule-schema
 ```
 
 ## Public Presentation

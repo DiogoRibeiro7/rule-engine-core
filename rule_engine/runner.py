@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from .declarative import DeclarativeRule, load_rule_file
+from .declarative import DeclarativeRule, get_rule_schema, load_rule_file
 from .runtime import CompiledRule, DeclarativeEngine, EmittedAlert, ReplayDeliveryReport
 from .types import SensorEvent
 
@@ -258,6 +258,10 @@ def generate_json_schema() -> Dict[str, Any]:
     }
 
 
+def generate_rule_json_schema() -> Dict[str, Any]:
+    return get_rule_schema()
+
+
 def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Load declarative rules and execute them against NDJSON events."
@@ -265,6 +269,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("rules", nargs="*", help="Paths to declarative rule YAML files")
     parser.add_argument("--json", action="store_true", help="Emit the compiled runtime model as JSON")
     parser.add_argument("--schema", action="store_true", help="Emit the JSON schema for the runtime model")
+    parser.add_argument("--rule-schema", action="store_true", help="Emit the declarative rule schema as JSON")
     parser.add_argument("--events", help="Path to an NDJSON file of sensor events")
     parser.add_argument(
         "--delivery-report-json",
@@ -280,8 +285,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     if args.schema:
         print(json.dumps(generate_json_schema(), indent=2))
         return 0
+    if args.rule_schema:
+        print(json.dumps(generate_rule_json_schema(), indent=2))
+        return 0
     if not args.rules:
-        parser.error("At least one rule path is required unless --schema is set.")
+        parser.error("At least one rule path is required unless --schema or --rule-schema is set.")
 
     rule_paths = [Path(path) for path in args.rules]
     runtime_rules = load_declarative_rules(rule_paths)
