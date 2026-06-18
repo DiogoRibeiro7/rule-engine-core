@@ -4,6 +4,8 @@ This repository contains the core runtime for a generic declarative rule engine.
 It currently provides an executable in-memory replay engine and is being
 extended toward a fully implemented sink delivery system.
 
+![Rule Engine Core architecture](docs/architecture.svg)
+
 ## Current State
 
 - Canonical runtime model: keyed execution with domain-specific identifiers supplied by the caller.
@@ -24,7 +26,10 @@ extended toward a fully implemented sink delivery system.
 - `tests/` — unit tests for rule semantics and timing behavior.
 - `sample_rules/` — sample declarative rules used as reference fixtures.
 - `sample_data/` — NDJSON fixtures for replay-based tests and demos.
+- `docs/architecture.svg` — public-facing architecture diagram for repo pages and social sharing.
+- `docs/linkedin-project-kit.md` — reusable LinkedIn project copy, post text, and publishing checklist.
 - `ROADMAP.md` — prioritized next steps for stabilizing and extending the engine.
+- `LICENSE` — MIT license for public reuse.
 
 ## Scope
 
@@ -82,6 +87,12 @@ Emit replay alerts together with the delivery report as JSON:
 ```bash
 python -m rule_engine.runner sample_rules/dual_source_gap.yaml --events sample_data/dual_source_gap_events.ndjson --until 2023-11-15T12:26:40+00:00 --delivery-report-json
 ```
+
+## Public Presentation
+
+The repository is public and intended to be linkable as a portfolio project.
+Use `docs/architecture.svg` for visual context and `docs/linkedin-project-kit.md`
+for ready-to-publish LinkedIn project text and post copy.
 
 ## Roadmap Alignment
 

@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">Rule Engine Core Architecture</title>
+  <desc id="desc">High-level architecture diagram for Rule Engine Core showing YAML rules, replay events, runtime, sinks, and reporting.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f3efe5"/>
+      <stop offset="100%" stop-color="#e4edf5"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1f5c4a"/>
+      <stop offset="100%" stop-color="#2d7d74"/>
+    </linearGradient>
+    <style>
+      .title { font: 700 42px 'Segoe UI', Arial, sans-serif; fill: #0f1720; }
+      .subtitle { font: 400 20px 'Segoe UI', Arial, sans-serif; fill: #3b4a57; }
+      .label { font: 700 22px 'Segoe UI', Arial, sans-serif; fill: #10202b; }
+      .body { font: 400 18px 'Segoe UI', Arial, sans-serif; fill: #243746; }
+      .small { font: 600 16px 'Segoe UI', Arial, sans-serif; fill: #f8fbfd; letter-spacing: 0.08em; }
+      .box { fill: #ffffff; stroke: #c7d4de; stroke-width: 2; rx: 24; }
+      .box-accent { fill: #0f1720; stroke: #0f1720; stroke-width: 2; rx: 24; }
+      .pill { fill: url(#accent); rx: 16; }
+      .arrow { stroke: #24566d; stroke-width: 4; fill: none; stroke-linecap: round; }
+    </style>
+    <marker id="arrowhead" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#24566d"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="720" fill="url(#bg)"/>
+
+  <text x="70" y="80" class="title">Rule Engine Core</text>
+  <text x="70" y="116" class="subtitle">Declarative runtime, replay execution, sink delivery, and delivery reporting</text>
+
+  <rect x="70" y="170" width="250" height="160" class="box"/>
+  <text x="100" y="220" class="label">Rule Definitions</text>
+  <text x="100" y="258" class="body">YAML trigger grammar</text>
+  <text x="100" y="286" class="body">Sink config validation</text>
+  <text x="100" y="314" class="body">Canonical sink normalization</text>
+
+  <rect x="70" y="390" width="250" height="160" class="box"/>
+  <text x="100" y="440" class="label">Replay Inputs</text>
+  <text x="100" y="478" class="body">NDJSON event fixtures</text>
+  <text x="100" y="506" class="body">Deterministic timestamps</text>
+  <text x="100" y="534" class="body">Timer advancement</text>
+
+  <rect x="390" y="170" width="340" height="380" class="box-accent"/>
+  <text x="420" y="220" class="small">CORE RUNTIME</text>
+  <text x="420" y="272" class="label" fill="#ffffff">DeclarativeEngine</text>
+  <text x="420" y="318" class="body" fill="#d8e4ea">event, window, absence, composite, scheduled</text>
+  <text x="420" y="354" class="body" fill="#d8e4ea">compiled rules + entity state + timers</text>
+  <text x="420" y="390" class="body" fill="#d8e4ea">template rendering + alert emission</text>
+  <text x="420" y="426" class="body" fill="#d8e4ea">replay delivery report generation</text>
+
+  <rect x="420" y="462" width="280" height="56" class="pill"/>
+  <text x="450" y="498" class="small">EMITTED ALERTS + DELIVERY RESULTS</text>
+
+  <rect x="800" y="130" width="320" height="230" class="box"/>
+  <text x="830" y="180" class="label">Sink Registry</text>
+  <text x="830" y="218" class="body">stdout</text>
+  <text x="830" y="246" class="body">file / NDJSON</text>
+  <text x="830" y="274" class="body">webhook, queue, object storage</text>
+  <text x="830" y="302" class="body">retry, backoff, dead letter</text>
+  <text x="830" y="330" class="body">typed delivery results</text>
+
+  <rect x="800" y="410" width="320" height="180" class="box"/>
+  <text x="830" y="460" class="label">Observability</text>
+  <text x="830" y="498" class="body">delivery metrics snapshots</text>
+  <text x="830" y="526" class="body">structured delivery log</text>
+  <text x="830" y="554" class="body">JSON replay delivery report</text>
+
+  <path d="M320 250 C350 250 350 250 390 250" class="arrow" marker-end="url(#arrowhead)"/>
+  <path d="M320 470 C350 470 350 470 390 470" class="arrow" marker-end="url(#arrowhead)"/>
+  <path d="M730 320 C760 320 760 245 800 245" class="arrow" marker-end="url(#arrowhead)"/>
+  <path d="M730 400 C760 400 760 500 800 500" class="arrow" marker-end="url(#arrowhead)"/>
+
+  <text x="70" y="650" class="subtitle">Repository: github.com/DiogoRibeiro7/rule-engine-core</text>
+</svg>
