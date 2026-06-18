@@ -1,0 +1,3 @@
+{"entity_id": "entity-1", "sensor_type": "source_alpha", "value": 95.0, "timestamp_ms": 1700000000000}
+{"entity_id": "entity-1", "sensor_type": "source_alpha", "value": 96.0, "timestamp_ms": 1700086400000}
+{"entity_id": "entity-1", "sensor_type": "source_alpha", "value": 94.0, "timestamp_ms": 1700172800000}

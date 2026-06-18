@@ -1,0 +1,26 @@
+rule_id: source_gap_48h
+description: Alert if no source_alpha reading received for 48 hours
+
+trigger:
+  type: absence
+  timeout: 48h
+
+sources:
+  - sensor_type: source_alpha
+    entity_id: "*"
+    trigger:
+      type: absence
+      timeout: 48h
+
+condition:
+  operator: AND
+
+actions:
+  - severity: warning
+    message: "No source_alpha reading for entity {{entity_id}} in the last 48 hours."
+    sinks:
+      - type: webhook
+        url: "https://hooks.hospital.internal/rule_engine"
+        headers:
+          Authorization: "Bearer {{secret:webhook_token}}"
+

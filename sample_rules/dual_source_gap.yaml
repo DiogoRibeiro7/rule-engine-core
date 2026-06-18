@@ -1,0 +1,23 @@
+rule_id: dual_source_gap
+description: Alert when both source_alpha and source_beta are silent
+trigger:
+  type: composite
+sources:
+  - sensor_type: source_alpha
+    entity_id: "*"
+    trigger:
+      type: absence
+      timeout: 5h
+  - sensor_type: source_beta
+    entity_id: "*"
+    trigger:
+      type: absence
+      timeout: 10h
+condition:
+  operator: AND
+actions:
+  - severity: warning
+    message: "Dual source inactivity warning for {{entity_id}}."
+    sinks:
+      - type: sqs
+        queue_url: "https://sqs.example.com/queue"
