@@ -29,6 +29,7 @@ extended toward a fully implemented sink delivery system.
 - `sample_rules/` — sample declarative rules used as reference fixtures.
 - `sample_data/` — NDJSON fixtures for replay-based tests and demos.
 - `docs/architecture.svg` — public-facing architecture diagram for repo pages and social sharing.
+- `docs/rule-language.md` — exact supported declarative rule-language subset.
 - `docs/linkedin-project-kit.md` — reusable LinkedIn project copy, post text, and publishing checklist.
 - `ROADMAP.md` — prioritized next steps for stabilizing and extending the engine.
 - `LICENSE` — MIT license for public reuse.
@@ -97,6 +98,18 @@ Emit the declarative rule schema as JSON:
 ```bash
 python -m rule_engine.runner --rule-schema
 ```
+
+## Supported Language
+
+The exact supported declarative subset is documented in
+`docs/rule-language.md`. Use that file as the repo-level contract for:
+
+- trigger types and allowed trigger fields
+- duration and cron syntax
+- condition and operand operators
+- aggregation functions
+- sink configuration grammar
+- explicitly unsupported features
 
 ## Public Presentation
 

@@ -21,6 +21,7 @@ Build a small, trustworthy declarative rule engine that:
 - The package is now generic; the sample rules are only reference fixtures.
 - Declarative rules now validate against a formal schema before execution.
 - Trigger/duration/cron edge cases now fail fast during compilation.
+- The exact supported declarative subset is now documented in-repo.
 - Sink configs now validate against explicit grammar for the implemented sink types.
 - The delivery layer is executable, but production-grade backend breadth and policy depth are still incomplete.
 
