@@ -27,6 +27,7 @@ Build a small, trustworthy declarative rule engine that:
 - A lightweight embedding API now exists for YAML, file-based, and precompiled engine construction.
 - Typed rule metadata and evaluation result objects now exist for embedding use cases.
 - Public runtime models are now separated from execution logic into clearer module boundaries.
+- Formatter/linter configuration is now defined in `pyproject.toml` and exercised in CI.
 - Sink configs now validate against explicit grammar for the implemented sink types.
 - The delivery layer is executable, but production-grade backend breadth and policy depth are still incomplete.
 

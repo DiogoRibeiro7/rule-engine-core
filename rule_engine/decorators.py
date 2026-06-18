@@ -10,9 +10,7 @@ def event_rule(rule_id: str, description: str = "", sinks: Optional[List[Any]] =
     sinks = sinks or []
 
     def decorator(fn: Callable):
-        EVENT_RULES.append(
-            RuleSpec(rule_id=rule_id, description=description, sinks=sinks, fn=fn)
-        )
+        EVENT_RULES.append(RuleSpec(rule_id=rule_id, description=description, sinks=sinks, fn=fn))
         return fn
 
     return decorator

@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-
 _SINK_TYPE_ALIASES = {
     "console": "stdout",
     "ndjson": "file",
@@ -237,9 +236,7 @@ def _matches_schema_type(value: Any, expected: str) -> bool:
 def _validate_schema(value: Any, schema: Dict[str, Any], path: str = "rule") -> None:
     expected_type = schema.get("type")
     if expected_type and not _matches_schema_type(value, expected_type):
-        raise ValueError(
-            f"{path} must be a {expected_type}, got {_type_name(value)}"
-        )
+        raise ValueError(f"{path} must be a {expected_type}, got {_type_name(value)}")
 
     allowed_enum = schema.get("enum")
     if allowed_enum is not None and value not in allowed_enum:
@@ -251,9 +248,7 @@ def _validate_schema(value: Any, schema: Dict[str, Any], path: str = "rule") -> 
         required = schema.get("required", [])
         for key in required:
             if key not in value:
-                raise ValueError(
-                    f"{path} is missing required field '{key}'"
-                )
+                raise ValueError(f"{path} is missing required field '{key}'")
         if schema.get("additionalProperties", True) is False:
             unknown_fields = set(value) - set(properties)
             if unknown_fields:
@@ -274,16 +269,20 @@ def _validate_schema(value: Any, schema: Dict[str, Any], path: str = "rule") -> 
                 _validate_schema(item, item_schema, f"{path}[{index}]")
 
 
-def _validate_retry_config(rule_id: str, action_index: int, sink_type: str, value: Any) -> Dict[str, Any]:
+def _validate_retry_config(
+    rule_id: str, action_index: int, sink_type: str, value: Any
+) -> Dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(
-            f"Rule {rule_id} action {action_index} sink '{sink_type}' field 'retry' must be an object"
+            f"Rule {rule_id} action {action_index} sink '{sink_type}' "
+            "field 'retry' must be an object"
         )
     unknown = set(value) - _RETRY_ALLOWED_FIELDS
     if unknown:
         unknown_list = ", ".join(sorted(unknown))
         raise ValueError(
-            f"Rule {rule_id} action {action_index} sink '{sink_type}' has unsupported retry fields: {unknown_list}"
+            f"Rule {rule_id} action {action_index} sink '{sink_type}' "
+            f"has unsupported retry fields: {unknown_list}"
         )
     return value
 
@@ -294,13 +293,16 @@ def _normalize_sink_config(rule_id: str, action_index: int, sink: Any) -> Dict[s
 
     raw_type = sink.get("type")
     if not raw_type:
-        raise ValueError(f"Rule {rule_id} action {action_index} sink is missing required field 'type'")
+        raise ValueError(
+            f"Rule {rule_id} action {action_index} sink is missing required field 'type'"
+        )
 
     sink_type = _SINK_TYPE_ALIASES.get(str(raw_type), str(raw_type))
     if sink_type not in _SINK_ALLOWED_FIELDS:
         supported = ", ".join(sorted(_SINK_ALLOWED_FIELDS))
         raise ValueError(
-            f"Rule {rule_id} action {action_index} sink type '{raw_type}' is unsupported; supported sink types: {supported}"
+            f"Rule {rule_id} action {action_index} sink type '{raw_type}' "
+            f"is unsupported; supported sink types: {supported}"
         )
 
     normalized = dict(sink)
@@ -313,14 +315,18 @@ def _normalize_sink_config(rule_id: str, action_index: int, sink: Any) -> Dict[s
     if unknown_fields:
         unknown_list = ", ".join(sorted(unknown_fields))
         raise ValueError(
-            f"Rule {rule_id} action {action_index} sink '{sink_type}' has unsupported fields: {unknown_list}"
+            f"Rule {rule_id} action {action_index} sink '{sink_type}' "
+            f"has unsupported fields: {unknown_list}"
         )
 
-    missing_fields = [field for field in sorted(_SINK_REQUIRED_FIELDS[sink_type]) if not normalized.get(field)]
+    missing_fields = [
+        field for field in sorted(_SINK_REQUIRED_FIELDS[sink_type]) if not normalized.get(field)
+    ]
     if missing_fields:
         missing_list = ", ".join(missing_fields)
         raise ValueError(
-            f"Rule {rule_id} action {action_index} sink '{sink_type}' is missing required fields: {missing_list}"
+            f"Rule {rule_id} action {action_index} sink '{sink_type}' "
+            f"is missing required fields: {missing_list}"
         )
 
     retry_config = normalized.get("retry")
@@ -330,7 +336,8 @@ def _normalize_sink_config(rule_id: str, action_index: int, sink: Any) -> Dict[s
     headers = normalized.get("headers")
     if headers is not None and not isinstance(headers, dict):
         raise ValueError(
-            f"Rule {rule_id} action {action_index} sink '{sink_type}' field 'headers' must be an object"
+            f"Rule {rule_id} action {action_index} sink '{sink_type}' "
+            "field 'headers' must be an object"
         )
 
     return normalized
@@ -356,9 +363,7 @@ def _load_sources(data: Any) -> List[Source]:
         Source(
             sensor_type=source["sensor_type"],
             entity_id=source.get("entity_id", "*"),
-            trigger=_load_trigger(source.get("trigger", {}))
-            if source.get("trigger")
-            else None,
+            trigger=_load_trigger(source.get("trigger", {})) if source.get("trigger") else None,
         )
         for source in data
     ]

@@ -4,18 +4,18 @@ from pathlib import Path
 
 import pytest
 
+from rule_engine.api import build_engine, build_engine_from_yaml, create_engine
+from rule_engine.compiler import compile_rule, load_and_compile_rule_files
 from rule_engine.declarative import load_rule_yaml
 from rule_engine.runner import (
-    emit_replay_report_json,
     RuntimeRule,
+    emit_replay_report_json,
     generate_json_schema,
     generate_rule_json_schema,
     load_declarative_rules,
     replay_events,
     replay_events_with_report,
 )
-from rule_engine.api import build_engine_from_yaml, build_engine, create_engine
-from rule_engine.compiler import compile_rule, load_and_compile_rule_files
 from rule_engine.runtime import CompiledEngine, DeclarativeEngine, EngineConfig
 from rule_engine.sinks import SinkRegistry, StdoutSink
 from rule_engine.types import SensorEvent
@@ -26,9 +26,7 @@ def _ts(year: int, month: int, day: int, hour: int, minute: int) -> int:
 
 
 def test_loads_runtime_metadata_for_sample_rule():
-    rule_path = (
-        Path(__file__).resolve().parents[1] / "sample_rules" / "source_gap.yaml"
-    )
+    rule_path = Path(__file__).resolve().parents[1] / "sample_rules" / "source_gap.yaml"
     rules = load_declarative_rules([rule_path])
 
     assert len(rules) == 1
@@ -41,9 +39,7 @@ def test_loads_runtime_metadata_for_sample_rule():
 
 
 def test_load_and_compile_rule_files_returns_compiled_rules():
-    rule_path = (
-        Path(__file__).resolve().parents[1] / "sample_rules" / "source_gap.yaml"
-    )
+    rule_path = Path(__file__).resolve().parents[1] / "sample_rules" / "source_gap.yaml"
 
     compiled_rules = load_and_compile_rule_files([rule_path])
 
@@ -616,7 +612,9 @@ actions:
     message: "bad"
     sinks: []
 """
-    with pytest.raises(ValueError, match="trigger.slide to be less than or equal to trigger.duration"):
+    with pytest.raises(
+        ValueError, match="trigger.slide to be less than or equal to trigger.duration"
+    ):
         DeclarativeEngine([load_rule_yaml(yaml_text)])
 
 

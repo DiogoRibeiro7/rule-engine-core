@@ -233,4 +233,3 @@ actions:
 """
     with pytest.raises(ValueError, match="rule.trigger.type must be one of"):
         load_rule_yaml(yaml_text)
-

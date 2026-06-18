@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Iterable, List, Optional
 
-from .registry import EVENT_RULES, SCHEDULED_RULES, WINDOW_RULES, RuleSpec
+from .registry import EVENT_RULES, SCHEDULED_RULES, WINDOW_RULES
 from .types import Alert, RuleContext, SensorEvent, StoreRecord
 from .window import EntityWindow
 
@@ -32,12 +32,8 @@ class RuleEngine:
         end: datetime,
         events: Iterable[SensorEvent],
     ) -> List[Alert]:
-        window = EntityWindow(
-            entity_id=entity_id, start=start, end=end, events=list(events)
-        )
-        context = RuleContext(
-            entity_id=entity_id, rule_id="", timestamp=end, duration=end - start
-        )
+        window = EntityWindow(entity_id=entity_id, start=start, end=end, events=list(events))
+        context = RuleContext(entity_id=entity_id, rule_id="", timestamp=end, duration=end - start)
         alerts: List[Alert] = []
         for rule in WINDOW_RULES:
             context.rule_id = rule.rule_id

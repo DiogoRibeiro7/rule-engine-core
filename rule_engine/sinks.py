@@ -121,8 +121,7 @@ class DeadLetterRecord:
 
 
 class DeadLetterStore(Protocol):
-    def record(self, record: DeadLetterRecord) -> None:
-        ...
+    def record(self, record: DeadLetterRecord) -> None: ...
 
 
 class InMemoryDeadLetterStore:
@@ -162,8 +161,7 @@ class FileDeadLetterStore:
 class SinkAdapter(Protocol):
     sink_type: str
 
-    def deliver(self, request: DeliveryRequest) -> DeliveryResult:
-        ...
+    def deliver(self, request: DeliveryRequest) -> DeliveryResult: ...
 
 
 class SinkRegistry:
@@ -281,9 +279,7 @@ class SinkRegistry:
         )
         return last_result
 
-    def _record_dead_letter(
-        self, request: DeliveryRequest, result: DeliveryResult
-    ) -> bool:
+    def _record_dead_letter(self, request: DeliveryRequest, result: DeliveryResult) -> bool:
         self._increment_metrics(request.sink_type, dead_letters=1)
         if self.dead_letter_store is None:
             return True
@@ -459,8 +455,9 @@ class WebhookSink:
 
 
 class QueueTransport(Protocol):
-    def send(self, queue: str, payload: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
-        ...
+    def send(
+        self, queue: str, payload: Dict[str, Any], config: Dict[str, Any]
+    ) -> Dict[str, Any]: ...
 
 
 class InMemoryQueueTransport:
@@ -533,8 +530,7 @@ class ObjectStorageTransport(Protocol):
         key: str,
         body: str,
         config: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        ...
+    ) -> Dict[str, Any]: ...
 
 
 class FileObjectStorageTransport:

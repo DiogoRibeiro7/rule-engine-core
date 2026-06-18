@@ -71,13 +71,25 @@ What this repo is not yet:
 Install the development dependencies:
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install -e .[dev]
 ```
 
 Run the reference tests:
 
 ```bash
 python -m pytest
+```
+
+Run the linter:
+
+```bash
+python -m ruff check .
+```
+
+Auto-format the repo:
+
+```bash
+python -m ruff format .
 ```
 
 Run a declarative YAML rule demo:

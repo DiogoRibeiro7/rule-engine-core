@@ -23,7 +23,6 @@ from .sinks import (
 from .types import Alert, RuleContext, SensorEvent
 from .window import EntityWindow
 
-
 _DURATION_RE = re.compile(r"^(?P<value>\d+)(?P<unit>[smhd])$")
 _TEMPLATE_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
 _TRIGGER_TYPES = {"event", "window", "absence", "composite", "scheduled"}
@@ -105,7 +104,8 @@ class CompiledRule:
         if trigger_type not in _TRIGGER_TYPES:
             supported = ", ".join(sorted(_TRIGGER_TYPES))
             raise ValueError(
-                f"Rule {rule.rule_id} has unsupported trigger type '{trigger_type}'; supported trigger types: {supported}"
+                f"Rule {rule.rule_id} has unsupported trigger type "
+                f"'{trigger_type}'; supported trigger types: {supported}"
             )
         _validate_trigger_fields(rule)
         duration = parse_duration(rule.trigger.duration)
@@ -144,7 +144,8 @@ class CompiledRule:
                 slide = duration
             if slide > duration:
                 raise ValueError(
-                    f"Window rule {rule.rule_id} requires trigger.slide to be less than or equal to trigger.duration"
+                    f"Window rule {rule.rule_id} requires trigger.slide "
+                    "to be less than or equal to trigger.duration"
                 )
         if trigger_type == "absence":
             if timeout is None and rule.sources[0].trigger is not None:
@@ -154,9 +155,7 @@ class CompiledRule:
         if trigger_type == "composite":
             source_timeouts: Dict[str, timedelta] = {}
             for source in rule.sources:
-                source_timeout = parse_duration(
-                    source.trigger.timeout if source.trigger else None
-                )
+                source_timeout = parse_duration(source.trigger.timeout if source.trigger else None)
                 if source_timeout is None:
                     raise ValueError(
                         f"Composite rule {rule.rule_id} requires per-source absence timeouts"
@@ -201,10 +200,7 @@ class CompiledRule:
             entity_id_filter=self.entity_id_filter,
             sensor_types=list(self.sensor_types),
             sink_types=[
-                sink["type"]
-                for action in self.actions
-                for sink in action.sinks
-                if sink.get("type")
+                sink["type"] for action in self.actions for sink in action.sinks if sink.get("type")
             ],
             aggregation_ids=[aggregation.agg_id for aggregation in self.aggregations],
         )
@@ -308,7 +304,8 @@ def _validate_trigger_fields(rule: DeclarativeRule) -> None:
     if invalid_fields:
         field_list = ", ".join(sorted(invalid_fields))
         raise ValueError(
-            f"Rule {rule.rule_id} trigger type '{trigger_type}' does not support fields: {field_list}"
+            f"Rule {rule.rule_id} trigger type '{trigger_type}' "
+            f"does not support fields: {field_list}"
         )
 
 
@@ -320,19 +317,19 @@ def _validate_condition(
     if operator is not None and operator not in _CONDITION_OPERATORS:
         supported = ", ".join(sorted(_CONDITION_OPERATORS))
         raise ValueError(
-            f"Rule {rule_id} has unsupported condition operator '{operator}'; supported condition operators: {supported}"
+            f"Rule {rule_id} has unsupported condition operator "
+            f"'{operator}'; supported condition operators: {supported}"
         )
     for index, operand in enumerate(operands, start=1):
         if operand.const is not None:
             continue
         if operand.metric is None or operand.operator is None:
-            raise ValueError(
-                f"Rule {rule_id} operand {index} requires metric and operator"
-            )
+            raise ValueError(f"Rule {rule_id} operand {index} requires metric and operator")
         if operand.operator not in _COMPARISON_OPERATORS:
             supported = ", ".join(sorted(_COMPARISON_OPERATORS))
             raise ValueError(
-                f"Rule {rule_id} operand {index} has unsupported operator '{operand.operator}'; supported operators: {supported}"
+                f"Rule {rule_id} operand {index} has unsupported operator "
+                f"'{operand.operator}'; supported operators: {supported}"
             )
 
 
@@ -411,7 +408,11 @@ def _evaluate_aggregation(
             return [len(bucket) for bucket in source_values]
         return len(source_values)
     if function == "sum":
-        return [sum(bucket) for bucket in source_values] if aggregation.sub_window else sum(source_values)
+        return (
+            [sum(bucket) for bucket in source_values]
+            if aggregation.sub_window
+            else sum(source_values)
+        )
     if function == "mean":
         if aggregation.sub_window is not None:
             return [mean(bucket) for bucket in source_values]
@@ -438,7 +439,9 @@ def _evaluate_aggregation(
         return source_values[-1] - source_values[0]
     if function == "rate":
         delta = _evaluate_aggregation(
-            Aggregation(aggregation.agg_id, "delta", field=aggregation.field, input=aggregation.input),
+            Aggregation(
+                aggregation.agg_id, "delta", field=aggregation.field, input=aggregation.input
+            ),
             window,
             outputs,
         )
@@ -474,7 +477,9 @@ def _compare(left: Any, operator: str, right: Any) -> bool:
     raise ValueError(f"Unsupported operator: {operator}")
 
 
-def _evaluate_operands(operator: Optional[str], operands: List[Operand], values: Dict[str, Any]) -> bool:
+def _evaluate_operands(
+    operator: Optional[str], operands: List[Operand], values: Dict[str, Any]
+) -> bool:
     if not operands:
         return False
     results: List[bool] = []
@@ -610,7 +615,8 @@ class CompiledEngine:
         if self.config.schedule_start is not None:
             return _normalize_datetime(self.config.schedule_start)
         raise ValueError(
-            "Scheduled rules require EngineConfig.initial_watermark or EngineConfig.schedule_start before entity registration"
+            "Scheduled rules require EngineConfig.initial_watermark or "
+            "EngineConfig.schedule_start before entity registration"
         )
 
     def _next_due_time(self) -> Optional[datetime]:
@@ -620,12 +626,18 @@ class CompiledEngine:
                 rule = self._rule_map[rule_id]
                 if rule.trigger_type == "absence":
                     last_seen = state.last_seen.get(rule.sensor_types[0])
-                    if last_seen is not None and not state.absence_fired and rule.timeout is not None:
+                    if (
+                        last_seen is not None
+                        and not state.absence_fired
+                        and rule.timeout is not None
+                    ):
                         due_times.append(last_seen + rule.timeout)
                 elif rule.trigger_type == "composite":
                     for sensor_type, timeout in rule.source_timeouts.items():
                         last_seen = state.last_seen.get(sensor_type)
-                        if last_seen is not None and not state.source_absent.get(sensor_type, False):
+                        if last_seen is not None and not state.source_absent.get(
+                            sensor_type, False
+                        ):
                             due_times.append(last_seen + timeout)
                 elif rule.trigger_type == "window":
                     if state.next_window_end is not None:
@@ -665,18 +677,14 @@ class CompiledEngine:
                         active = self._composite_condition_active(rule, state)
                         if active and not state.composite_active:
                             state.composite_active = True
-                            emitted.extend(
-                                self._emit_composite(rule, entity_id, state, fire_time)
-                            )
+                            emitted.extend(self._emit_composite(rule, entity_id, state, fire_time))
                 elif rule.trigger_type == "window":
                     if state.next_window_end == fire_time:
                         emitted.extend(self._emit_window(rule, entity_id, state, fire_time))
                         state.next_window_end = fire_time + (rule.slide or timedelta(0))
                 elif rule.trigger_type == "scheduled":
                     if state.next_schedule_fire == fire_time:
-                        emitted.extend(
-                            self._emit_scheduled(rule, entity_id, state, fire_time)
-                        )
+                        emitted.extend(self._emit_scheduled(rule, entity_id, state, fire_time))
                         state.last_schedule_fire = fire_time
                         state.next_schedule_fire = _next_cron_fire(fire_time, rule.cron or "")
         return emitted
@@ -834,9 +842,7 @@ class CompiledEngine:
                     ),
                 )
             )
-            emitted[-1].delivery_results.extend(
-                self._deliver_action_sinks(action, emitted[-1])
-            )
+            emitted[-1].delivery_results.extend(self._deliver_action_sinks(action, emitted[-1]))
         return emitted
 
     def _deliver_action_sinks(
@@ -881,8 +887,14 @@ class CompiledEngine:
         if not lookbacks:
             return
         cutoff = now - max(lookbacks)
-        state.buffered_events = [event for event in state.buffered_events if event.timestamp >= cutoff]
-        if rule.trigger_type == "window" and state.next_window_end is None and rule.slide is not None:
+        state.buffered_events = [
+            event for event in state.buffered_events if event.timestamp >= cutoff
+        ]
+        if (
+            rule.trigger_type == "window"
+            and state.next_window_end is None
+            and rule.slide is not None
+        ):
             state.next_window_end = _align_window_end(now, rule.slide)
 
 

@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from .compiler import compile_rule, load_and_compile_rule_files
 from .declarative import DeclarativeRule, get_rule_schema, load_rule_file
 from .models import EmittedAlert, ReplayDeliveryReport
-from .runtime import CompiledEngine, CompiledRule, DeclarativeEngine
+from .runtime import CompiledEngine, CompiledRule
 from .types import SensorEvent
 
 
@@ -273,9 +273,15 @@ def main(argv: Iterable[str] | None = None) -> int:
         description="Load declarative rules and execute them against NDJSON events."
     )
     parser.add_argument("rules", nargs="*", help="Paths to declarative rule YAML files")
-    parser.add_argument("--json", action="store_true", help="Emit the compiled runtime model as JSON")
-    parser.add_argument("--schema", action="store_true", help="Emit the JSON schema for the runtime model")
-    parser.add_argument("--rule-schema", action="store_true", help="Emit the declarative rule schema as JSON")
+    parser.add_argument(
+        "--json", action="store_true", help="Emit the compiled runtime model as JSON"
+    )
+    parser.add_argument(
+        "--schema", action="store_true", help="Emit the JSON schema for the runtime model"
+    )
+    parser.add_argument(
+        "--rule-schema", action="store_true", help="Emit the declarative rule schema as JSON"
+    )
     parser.add_argument("--events", help="Path to an NDJSON file of sensor events")
     parser.add_argument(
         "--delivery-report-json",
