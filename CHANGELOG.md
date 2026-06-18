@@ -5,6 +5,30 @@ This project follows a simple keep-a-changelog style.
 The repository is still pre-`1.0`, so entries describe concrete repo changes
 rather than a strict compatibility promise.
 
+## Entry Pattern
+
+Use the following sections when they apply:
+
+- `Added`
+- `Changed`
+- `Fixed`
+- `Removed`
+- `Upgrade Notes`
+
+`Upgrade Notes` should be present whenever a downstream embedder or integration
+may need to change code, config, or expectations after pulling a new version.
+
+Suggested `Upgrade Notes` format:
+
+```md
+### Upgrade Notes
+
+- If you were constructing `SinkRegistry` manually for the standard adapter
+  set, prefer `create_sink_registry(...)`.
+- Webhook sink configs can now declare `auth_token` and `signature_secret`.
+  Existing configs remain valid.
+```
+
 ## Unreleased
 
 ### Added
@@ -20,6 +44,7 @@ rather than a strict compatibility promise.
 - Golden replay fixtures for sample scenarios.
 - Neutral multi-domain examples with checked-in sample rules and event data.
 - Top-level contribution notes and changelog policy.
+- A reusable changelog upgrade-note pattern for future releases.
 
 ### Changed
 

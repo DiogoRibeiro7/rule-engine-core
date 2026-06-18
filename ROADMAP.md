@@ -103,8 +103,11 @@ Goal: keep public docs aligned as the repo matures.
 
 Candidate work:
 
-- Add a short upgrade/migration note pattern to `CHANGELOG.md`.
 - Expand `docs/delivery-contract.md` with sample payloads per sink.
+
+Completed recently:
+
+- Added a short upgrade/migration note pattern to `CHANGELOG.md`.
 
 ## Recommended Next Steps
 
