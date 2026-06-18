@@ -102,6 +102,14 @@ def test_replay_events_with_report_returns_delivery_summary():
     assert len(report.delivery_log) == 1
     assert report.delivery_log[0].sink_type == "queue"
     assert report.delivery_log[0].status == "unsupported"
+    assert report.has_failures is True
+    assert report.has_dead_letters is True
+    assert report.sink_types() == ["queue"]
+    assert report.metrics_for("queue").unsupported == 1
+    assert report.metrics_for("missing").total_requests == 0
+    assert len(report.entries_for_sink("queue")) == 1
+    assert len(report.failed_entries()) == 1
+    assert len(report.dead_letter_entries()) == 1
 
 
 def test_emit_replay_report_json_includes_alerts_and_delivery_report():
@@ -381,6 +389,34 @@ actions:
     assert result.alert_count == 1
     assert len(result.alerts) == 1
     assert result.delivery_report.alert_count == 1
+    assert result.has_failures is False
+
+
+def test_embedded_engine_evaluate_exposes_failure_helpers():
+    base_path = Path(__file__).resolve().parents[1]
+    rule_path = base_path / "sample_rules" / "dual_source_gap.yaml"
+    event_path = base_path / "sample_data" / "dual_source_gap_events.ndjson"
+    until = datetime(2023, 11, 15, 12, 26, 40, tzinfo=UTC)
+    embedded = build_engine_from_yaml([rule_path.read_text(encoding="utf-8")])
+    events = [
+        SensorEvent(
+            entity_id=payload["entity_id"],
+            sensor_type=payload["sensor_type"],
+            value=float(payload["value"]),
+            timestamp_ms=int(payload["timestamp_ms"]),
+        )
+        for payload in (
+            json.loads(line)
+            for line in event_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+    ]
+
+    result = embedded.evaluate(events, until=until)
+
+    assert result.has_failures is True
+    assert result.delivery_report.metrics_for("queue").dead_letters == 1
+    assert result.delivery_report.dead_letter_entries()[0].sink_type == "queue"
 
 
 def test_build_engine_uses_explicit_config_and_sink_registry():

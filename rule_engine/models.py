@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional
 
-from .sinks import DeliveryLogEntry, DeliveryMetricsSnapshot, DeliveryResult
+from .sinks import DeliveryLogEntry, DeliveryMetrics, DeliveryMetricsSnapshot, DeliveryResult
 from .types import Alert
 
 
@@ -22,6 +22,29 @@ class ReplayDeliveryReport:
     alert_count: int
     delivery_metrics: DeliveryMetricsSnapshot
     delivery_log: List[DeliveryLogEntry]
+
+    @property
+    def has_failures(self) -> bool:
+        return self.delivery_metrics.overall.failed > 0
+
+    @property
+    def has_dead_letters(self) -> bool:
+        return self.delivery_metrics.overall.dead_letters > 0
+
+    def sink_types(self) -> List[str]:
+        return self.delivery_metrics.sink_types()
+
+    def metrics_for(self, sink_type: str) -> DeliveryMetrics:
+        return self.delivery_metrics.metrics_for(sink_type)
+
+    def entries_for_sink(self, sink_type: str) -> List[DeliveryLogEntry]:
+        return [entry for entry in self.delivery_log if entry.sink_type == sink_type]
+
+    def failed_entries(self) -> List[DeliveryLogEntry]:
+        return [entry for entry in self.delivery_log if entry.status != "delivered"]
+
+    def dead_letter_entries(self) -> List[DeliveryLogEntry]:
+        return [entry for entry in self.delivery_log if entry.dead_lettered]
 
 
 @dataclass(frozen=True)
@@ -43,6 +66,10 @@ class EvaluationResult:
     @property
     def alert_count(self) -> int:
         return len(self.alerts)
+
+    @property
+    def has_failures(self) -> bool:
+        return self.delivery_report.has_failures
 
 
 @dataclass(frozen=True)

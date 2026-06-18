@@ -41,6 +41,7 @@ Build a small, trustworthy declarative rule engine that:
 - Common sink-registry setup is now exposed through helper constructors for embedding code.
 - Webhook delivery now supports explicit auth-header and HMAC-signing configuration.
 - The compile/runtime/sink architecture boundaries are now documented explicitly in-repo.
+- Typed delivery reports now expose convenience query helpers for downstream inspection.
 
 ## Completed Foundations
 

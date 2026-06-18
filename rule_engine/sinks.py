@@ -375,6 +375,12 @@ class DeliveryMetricsSnapshot:
     overall: DeliveryMetrics
     by_sink: Dict[str, DeliveryMetrics]
 
+    def sink_types(self) -> List[str]:
+        return sorted(self.by_sink)
+
+    def metrics_for(self, sink_type: str) -> DeliveryMetrics:
+        return self.by_sink.get(sink_type, DeliveryMetrics())
+
 
 @dataclass(frozen=True)
 class DeliveryLogEntry:

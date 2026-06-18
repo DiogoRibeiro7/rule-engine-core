@@ -30,6 +30,7 @@ extended toward a fully implemented sink delivery system.
 - End-to-end integration tests now exercise file, queue, object-storage, and webhook sink paths, including retry/dead-letter behavior.
 - Webhook sinks now support explicit auth headers and HMAC body signing through declarative config.
 - Embedders can now create standard sink registries through helper constructors instead of manual adapter wiring.
+- Typed delivery reports now include convenience query helpers for per-sink metrics, failed entries, and dead-letter inspection.
 - Replay execution can now return a typed delivery report, and the CLI can emit alerts plus delivery telemetry as JSON.
 - Scope boundaries are now explicit: replay-first execution, narrow cron support, five maintained sink adapters, and no domain-specific rule packs in-repo.
 
@@ -177,6 +178,7 @@ embedded = build_engine_from_yaml([yaml_text])
 result = embedded.evaluate(events)
 alerts = result.alerts
 metadata = embedded.rule_metadata()
+failed = result.delivery_report.failed_entries()
 ```
 
 Create a standard sink registry for embedding without hand-wiring each adapter:
