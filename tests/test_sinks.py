@@ -6,12 +6,17 @@ from urllib.error import HTTPError, URLError
 from rule_engine.declarative import load_rule_yaml
 from rule_engine.runtime import DeclarativeEngine
 from rule_engine.sinks import (
+    DeadLetterRecord,
     DeliveryRequest,
+    DeliveryResult,
     FileSink,
+    FileDeadLetterStore,
     FileObjectStorageTransport,
+    InMemoryDeadLetterStore,
     InMemoryQueueTransport,
     ObjectStorageSink,
     QueueSink,
+    RetryPolicy,
     SinkRegistry,
     StdoutSink,
     WebhookSink,
@@ -40,6 +45,119 @@ def test_sink_registry_reports_unsupported_sink():
 
     assert result.status == "unsupported"
     assert result.retryable is False
+
+
+def test_retry_policy_defaults_to_single_attempt():
+    policy = RetryPolicy.from_config({})
+    assert policy.max_attempts == 1
+
+
+def test_sink_registry_retries_retryable_failures():
+    class FlakySink:
+        sink_type = "flaky"
+
+        def __init__(self):
+            self.calls = 0
+
+        def deliver(self, request):
+            self.calls += 1
+            if self.calls < 3:
+                return DeliveryResult(
+                    sink_type="flaky",
+                    status="failed",
+                    detail="temporary",
+                    retryable=True,
+                )
+            return DeliveryResult(
+                sink_type="flaky",
+                status="delivered",
+                detail="ok",
+            )
+
+    sink = FlakySink()
+    registry = SinkRegistry(adapters=[sink])
+    result = registry.deliver(
+        DeliveryRequest(
+            sink_type="flaky",
+            rule_id="rule-1",
+            entity_id="entity-1",
+            severity="warning",
+            message="hello",
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            payload={},
+            config={"type": "flaky", "retry": {"max_attempts": 3}},
+        )
+    )
+
+    assert result.status == "delivered"
+    assert result.metadata["attempt"] == 3
+    assert sink.calls == 3
+
+
+def test_sink_registry_records_dead_letter_after_final_failure():
+    class FailingSink:
+        sink_type = "failing"
+
+        def __init__(self):
+            self.calls = 0
+
+        def deliver(self, request):
+            self.calls += 1
+            return DeliveryResult(
+                sink_type="failing",
+                status="failed",
+                detail="still failing",
+                retryable=True,
+            )
+
+    sink = FailingSink()
+    dead_letters = InMemoryDeadLetterStore()
+    registry = SinkRegistry(adapters=[sink], dead_letter_store=dead_letters)
+    result = registry.deliver(
+        DeliveryRequest(
+            sink_type="failing",
+            rule_id="rule-1",
+            entity_id="entity-1",
+            severity="warning",
+            message="hello",
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            payload={"x": 1},
+            config={"type": "failing", "retry": {"max_attempts": 2}},
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.metadata["attempt"] == 2
+    assert sink.calls == 2
+    assert len(dead_letters.records) == 1
+    assert dead_letters.records[0].rule_id == "rule-1"
+
+
+def test_file_dead_letter_store_writes_record(tmp_path: Path):
+    target = tmp_path / "dead_letters.ndjson"
+    store = FileDeadLetterStore(target)
+    store.record(
+        DeadLetterRecord(
+            sink_type="queue",
+            rule_id="rule-1",
+            entity_id="entity-1",
+            severity="warning",
+            message="dead",
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            payload={"x": 1},
+            config={"type": "queue"},
+            result=DeliveryResult(
+                sink_type="queue",
+                status="failed",
+                detail="bad",
+                retryable=False,
+            ),
+        )
+    )
+
+    content = target.read_text(encoding="utf-8")
+    assert '"rule_id": "rule-1"' in content
+    assert '"status": "failed"' in content
 
 
 def test_stdout_sink_delivers_message():

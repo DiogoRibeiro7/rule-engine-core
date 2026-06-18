@@ -30,6 +30,69 @@ class DeliveryResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class RetryPolicy:
+    max_attempts: int = 1
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> "RetryPolicy":
+        retry_config = config.get("retry", {})
+        max_attempts = int(retry_config.get("max_attempts", 1))
+        return cls(max_attempts=max(1, max_attempts))
+
+
+@dataclass(frozen=True)
+class DeadLetterRecord:
+    sink_type: str
+    rule_id: str
+    entity_id: str
+    severity: str
+    message: str
+    timestamp: datetime
+    payload: Dict[str, Any]
+    config: Dict[str, Any]
+    result: DeliveryResult
+
+
+class DeadLetterStore(Protocol):
+    def record(self, record: DeadLetterRecord) -> None:
+        ...
+
+
+class InMemoryDeadLetterStore:
+    def __init__(self) -> None:
+        self.records: List[DeadLetterRecord] = []
+
+    def record(self, record: DeadLetterRecord) -> None:
+        self.records.append(record)
+
+
+class FileDeadLetterStore:
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+
+    def record(self, record: DeadLetterRecord) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "sink_type": record.sink_type,
+            "rule_id": record.rule_id,
+            "entity_id": record.entity_id,
+            "severity": record.severity,
+            "message": record.message,
+            "timestamp": record.timestamp.isoformat(),
+            "payload": record.payload,
+            "config": record.config,
+            "result": {
+                "status": record.result.status,
+                "detail": record.result.detail,
+                "retryable": record.result.retryable,
+                "metadata": record.result.metadata,
+            },
+        }
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload) + "\n")
+
+
 class SinkAdapter(Protocol):
     sink_type: str
 
@@ -38,8 +101,13 @@ class SinkAdapter(Protocol):
 
 
 class SinkRegistry:
-    def __init__(self, adapters: Iterable[SinkAdapter] | None = None):
+    def __init__(
+        self,
+        adapters: Iterable[SinkAdapter] | None = None,
+        dead_letter_store: DeadLetterStore | None = None,
+    ):
         self._adapters: Dict[str, SinkAdapter] = {}
+        self.dead_letter_store = dead_letter_store
         for adapter in adapters or []:
             self.register(adapter)
 
@@ -52,12 +120,48 @@ class SinkRegistry:
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
         adapter = self.get(request.sink_type)
         if adapter is None:
-            return DeliveryResult(
+            result = DeliveryResult(
                 sink_type=request.sink_type,
                 status="unsupported",
                 detail=f"No adapter registered for sink type '{request.sink_type}'",
             )
-        return adapter.deliver(request)
+            self._record_dead_letter(request, result)
+            return result
+
+        retry_policy = RetryPolicy.from_config(request.config)
+        last_result: DeliveryResult | None = None
+        for attempt in range(1, retry_policy.max_attempts + 1):
+            result = adapter.deliver(request)
+            result.metadata.setdefault("attempt", attempt)
+            result.metadata.setdefault("max_attempts", retry_policy.max_attempts)
+            last_result = result
+            if result.status == "delivered":
+                return result
+            if not result.retryable:
+                break
+
+        assert last_result is not None
+        self._record_dead_letter(request, last_result)
+        return last_result
+
+    def _record_dead_letter(
+        self, request: DeliveryRequest, result: DeliveryResult
+    ) -> None:
+        if self.dead_letter_store is None:
+            return
+        self.dead_letter_store.record(
+            DeadLetterRecord(
+                sink_type=request.sink_type,
+                rule_id=request.rule_id,
+                entity_id=request.entity_id,
+                severity=request.severity,
+                message=request.message,
+                timestamp=request.timestamp,
+                payload=request.payload,
+                config=request.config,
+                result=result,
+            )
+        )
 
 
 class StdoutSink:
