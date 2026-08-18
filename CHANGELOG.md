@@ -29,6 +29,39 @@ Suggested `Upgrade Notes` format:
   Existing configs remain valid.
 ```
 
+## Unreleased
+
+### Added
+
+- `CompiledEngine.watermark` exposes the current event-time watermark.
+- Watermark regression tests covering out-of-order events, backward
+  `advance_to` targets, and batches that predate the watermark.
+
+### Changed
+
+- Event-time order is now enforced. `process_event` rejects an event that
+  predates the current watermark, and `advance_to` rejects a target earlier
+  than it. Both raise before mutating any state, so a rejected event leaves
+  the engine untouched. Previously both assigned the watermark unconditionally,
+  so an out-of-order event moved it backward and could retroactively change
+  timer behaviour.
+- `sample_rules/source_gap.yaml` now posts to the reserved `example.com`
+  documentation domain instead of a domain-specific host.
+
+### Fixed
+
+- CI ran `mypy` without PyYAML stubs and failed on an `import-untyped` error;
+  `types-PyYAML` is now pinned as a dev dependency.
+
+### Upgrade Notes
+
+- If you feed events through `process_event` directly, they must arrive in
+  non-decreasing event-time order. Sort them first, or use `replay()`, which
+  sorts a batch for you. Events exactly at the current watermark are still
+  accepted.
+- If you relied on `advance_to` accepting an earlier target as a no-op, it now
+  raises. Track the current position with `CompiledEngine.watermark`.
+
 ## 0.1.0 - 2026-08-18
 
 First tagged release. Archived on Zenodo with a DOI.

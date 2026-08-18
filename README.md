@@ -88,6 +88,12 @@ alerts, which is what makes the golden-file tests possible. Timer-driven rules
 (`absence`, `scheduled`) advance via an explicit watermark rather than wall
 clock, so `--until` can push the engine past the final event.
 
+Event-time order is enforced rather than assumed. `replay()` sorts a batch
+before evaluating it, but feeding `process_event()` an event that predates the
+current watermark, or calling `advance_to()` with an earlier target, raises
+instead of silently rewinding time. `CompiledEngine.watermark` exposes the
+current position. Deliberate late-event policies are planned — see `ROADMAP.md`.
+
 **3. Deliver** — `rule_engine/sinks.py`
 
 Alerts are dispatched through a `SinkRegistry` of adapters. Non-stdout sinks

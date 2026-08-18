@@ -20,7 +20,7 @@ actions:
     message: "No source_alpha reading for entity {{entity_id}} in the last 48 hours."
     sinks:
       - type: webhook
-        url: "https://hooks.hospital.internal/rule_engine"
+        url: "https://hooks.example.com/rule_engine"
         headers:
           Authorization: "Bearer {{secret:webhook_token}}"
 

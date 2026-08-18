@@ -563,8 +563,20 @@ class CompiledEngine:
     def rule_metadata(self) -> List[RuleMetadata]:
         return [rule.metadata() for rule in self.rules]
 
+    @property
+    def watermark(self) -> Optional[datetime]:
+        """Current event-time watermark, or None before the first event."""
+        return self._watermark
+
     def process_event(self, event: SensorEvent) -> List[EmittedAlert]:
         timestamp = event.timestamp
+        if self._watermark is not None and timestamp < self._watermark:
+            raise ValueError(
+                f"Event for entity {event.entity_id!r} at {timestamp.isoformat()} predates "
+                f"the current watermark {self._watermark.isoformat()}. The engine evaluates "
+                "events in event-time order; sort events before feeding them in, or use "
+                "replay(), which sorts a batch for you."
+            )
         emitted = self.advance_to(timestamp)
         self._register_entity(event.entity_id)
         entity_states = self._entities[event.entity_id]
@@ -595,6 +607,12 @@ class CompiledEngine:
         if self._watermark is None:
             self._watermark = target
             return emitted
+        if target < self._watermark:
+            raise ValueError(
+                f"Cannot move the watermark backward from {self._watermark.isoformat()} "
+                f"to {target.isoformat()}. Timers have already fired up to the current "
+                "watermark, so rewinding it would produce inconsistent results."
+            )
 
         while True:
             next_due = self._next_due_time()

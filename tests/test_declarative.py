@@ -20,7 +20,7 @@ actions:
     message: "No source_alpha reading for entity {{entity_id}} in the last 48 hours."
     sinks:
       - type: webhook
-        url: "https://hooks.hospital.internal/rule_engine"
+        url: "https://hooks.example.com/rule_engine"
 """
     rule = load_rule_yaml(yaml_text)
     assert rule.rule_id == "source_gap_48h"

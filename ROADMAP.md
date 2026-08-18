@@ -28,7 +28,7 @@ correctness comes before durability, durability before lifecycle, and
 expressiveness before tooling that explains it.
 
 ```text
-correctness fixes
+correctness fixes                 [done]
   → late-event semantics
     → checkpoint / recovery
       → suppression + alert lifecycle
@@ -41,21 +41,23 @@ correctness fixes
 
 ---
 
-### Stage 0 — Correctness fixes
+### Stage 0 — Correctness fixes — complete
 
-Prerequisite for everything below. Known items:
+Prerequisite for everything below.
 
-- **Backward watermark movement is silently accepted.** `_apply_event` assigns
-  `self._watermark = timestamp` unconditionally, so an out-of-order event moves
-  the watermark backward and can retroactively change timer behaviour. Until
-  Stage 1 defines a deliberate policy, this should be rejected explicitly rather
-  than tolerated implicitly.
-- **`mypy` fails on `main`.** `runner.py` types `main(argv)` as
-  `Iterable[str] | None`, but `ArgumentParser.parse_args` requires
-  `Sequence[str] | None`. CI runs `mypy`, so this is a red build.
-- **A domain-specific URL survives in a sample rule.** `sample_rules/source_gap.yaml`
-  posts to `hooks.hospital.internal`, which contradicts the repo's
-  generic-examples boundary.
+- **Backward watermark movement is now rejected.** `process_event` and
+  `advance_to` previously assigned the watermark unconditionally, so an
+  out-of-order event moved it backward and could retroactively change timer
+  behaviour. Both paths now raise before mutating any state, and
+  `CompiledEngine.watermark` exposes the current value. Stage 1 replaces this
+  rejection with deliberate policy.
+- **CI is green.** Two separate problems were involved: `main(argv)` was typed
+  as `Iterable[str] | None` where `parse_args` requires `Sequence[str] | None`,
+  and CI ran `mypy` without PyYAML stubs. Both are fixed and `types-PyYAML` is
+  pinned as a dev dependency.
+- **The sample rules are domain-neutral.** `sample_rules/source_gap.yaml` posted
+  to `hooks.hospital.internal`; it now uses the reserved `example.com`
+  documentation domain.
 
 Any further findings from correctness review belong here before Stage 1 starts.
 
