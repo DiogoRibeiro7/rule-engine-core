@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from .compiler import compile_rule, load_and_compile_rule_files
 from .declarative import DeclarativeRule, get_rule_schema, load_rule_file
@@ -203,7 +203,7 @@ def generate_rule_json_schema() -> Dict[str, Any]:
     return get_rule_schema()
 
 
-def main(argv: Iterable[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Load declarative rules and execute them against NDJSON events."
     )
