@@ -527,6 +527,12 @@ def _evaluate_operands(
         if operand.metric is None or operand.operator is None:
             raise ValueError("Operand requires metric and operator")
         left = values.get(operand.metric)
+        if left is None:
+            # An aggregation over an empty window yields None, and a rule can
+            # reference a metric an event does not carry. Treat a missing value
+            # as unsatisfied rather than comparing None, which raised TypeError.
+            results.append(False)
+            continue
         results.append(_compare(left, operand.operator, operand.value))
     if operator == "OR":
         return any(results)

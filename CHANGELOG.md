@@ -62,6 +62,10 @@ Suggested `Upgrade Notes` format:
 
 ### Fixed
 
+- A condition operand referencing a value that is absent — an aggregation over an
+  empty window, or a metric the event does not carry — raised `TypeError` when
+  compared. Such an operand is now unsatisfied, so advancing a window rule past
+  its last event no longer crashes and absent data cannot satisfy a threshold.
 - CI ran `mypy` without PyYAML stubs and failed on an `import-untyped` error;
   `types-PyYAML` is now pinned as a dev dependency.
 
