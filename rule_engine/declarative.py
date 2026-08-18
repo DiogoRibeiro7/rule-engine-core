@@ -49,6 +49,7 @@ _DECLARATIVE_RULE_SCHEMA: Dict[str, Any] = {
     "properties": {
         "rule_id": {"type": "string"},
         "description": {"type": "string"},
+        "allowed_lateness": {"type": "string"},
         "trigger": {
             "type": "object",
             "properties": {
@@ -194,6 +195,7 @@ class DeclarativeRule:
     condition: Condition
     actions: List[Action]
     aggregations: List[Dict[str, Any]] = field(default_factory=list)
+    allowed_lateness: Optional[str] = None
 
     @property
     def functional_primitive(self) -> str:
@@ -452,6 +454,7 @@ def load_rule_yaml(text: str) -> DeclarativeRule:
         condition=_load_condition(document.get("condition")),
         actions=_load_actions(document["rule_id"], document.get("actions", [])),
         aggregations=document.get("aggregations", []),
+        allowed_lateness=document.get("allowed_lateness"),
     )
 
 

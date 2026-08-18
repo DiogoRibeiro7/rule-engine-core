@@ -29,7 +29,7 @@ expressiveness before tooling that explains it.
 
 ```text
 correctness fixes                 [done]
-  → late-event semantics
+  → late-event semantics          [partial]
     → checkpoint / recovery
       → suppression + alert lifecycle
         → rule versioning + hot reload
@@ -63,30 +63,43 @@ Any further findings from correctness review belong here before Stage 1 starts.
 
 ---
 
-### Stage 1 — Late-event and out-of-order handling
+### Stage 1 — Late-event and out-of-order handling — partially complete
 
 **Goal.** Make the engine honest about the distinction that defines stream
-processing:
+processing: event time is not processing time.
 
-$$\text{event time} \neq \text{processing time}$$
+Stage 0 made the ordering assumption explicit by rejecting violations. Stage 1
+replaces blanket rejection with declared tolerance.
 
-Today the engine assumes arrival order equals event order. Stage 0 makes that
-assumption explicit by rejecting violations; Stage 1 replaces rejection with
-deliberate policy.
+**Delivered.**
 
-**Shape.**
+- `allowed_lateness`, a per-rule duration, compared inclusively. It accepts
+  `0s` explicitly, which required `parse_duration` to grow an `allow_zero` flag.
+- Tolerated late events are folded into rule state in place: the watermark never
+  moves backward, no timers re-fire, `event` triggers are evaluated, window and
+  scheduled buffers receive the event in timestamp order, and `last_seen` only
+  ever advances.
+- `EngineConfig.late_event_policy` — `reject` (default) or `drop` — governing
+  events later than any rule tolerates. Engine-level rather than per-rule,
+  because it decides the fate of an event that no rule can use.
+- `CompiledEngine.late_event_metrics()`, a typed `LateEventMetrics` carrying
+  totals, a per-rule breakdown, and structured exports.
 
-- `allowed_lateness` as a rule-level duration.
-- Watermarks tracked per source and per entity rather than one global value.
-- An explicit late-event policy: `drop`, `accept`, or `recompute`.
+**Remaining.**
 
-Under `recompute`, a late event reopens the affected window, re-evaluates it,
-and reconciles any alert already emitted — which is why alert lifecycle
-(Stage 3) has to be able to retract as well as emit.
+- **`recompute`.** Reopening a window that has already closed means retracting
+  the alert it emitted, so this is blocked on the Stage 3 lifecycle work. The
+  policy value is deliberately rejected rather than accepted and silently
+  degraded to plain acceptance.
+- **Per-source and per-entity watermarks.** The watermark is still engine-wide.
+  Splitting it changes when every timer fires, making it a timer-machinery
+  refactor rather than an extension of the lateness work, so it is better done
+  on its own. Until then, one lagging entity holds the watermark back for all
+  of them.
 
-**Done when.** A test suite replays a stream in shuffled arrival order and
-asserts that, for each policy, output matches the documented expectation, and
-that `accept` and `recompute` converge on the same result as in-order replay.
+**Done when.** Shuffled arrival converges with in-order replay for window rules
+as well as event rules — which is exactly what `recompute` buys — and
+watermarks are tracked per entity.
 
 ---
 

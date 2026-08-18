@@ -114,7 +114,33 @@ class EvaluationResult:
         return json.dumps(self.to_dict(), indent=2)
 
 
+@dataclass
+class LateEventMetrics:
+    """Counts of events that arrived behind the engine watermark."""
+
+    total: int = 0
+    accepted: int = 0
+    dropped: int = 0
+    rejected: int = 0
+    per_rule_accepted: Dict[str, int] = field(default_factory=dict)
+    per_rule_dropped: Dict[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "total": self.total,
+            "accepted": self.accepted,
+            "dropped": self.dropped,
+            "rejected": self.rejected,
+            "per_rule_accepted": dict(self.per_rule_accepted),
+            "per_rule_dropped": dict(self.per_rule_dropped),
+        }
+
+    def to_json(self, indent: Optional[int] = None) -> str:
+        return json.dumps(self.to_dict(), indent=indent)
+
+
 @dataclass(frozen=True)
 class EngineConfig:
     initial_watermark: Optional[datetime] = None
     schedule_start: Optional[datetime] = None
+    late_event_policy: str = "reject"

@@ -19,6 +19,7 @@ from .models import (
     EmittedAlert,
     EngineConfig,
     EvaluationResult,
+    LateEventMetrics,
     ReplayDeliveryReport,
     RuleMetadata,
 )
@@ -76,6 +77,7 @@ __all__ = [
     "EmittedAlert",
     "EngineConfig",
     "EvaluationResult",
+    "LateEventMetrics",
     "EntityWindow",
     "FileDeadLetterStore",
     "FileSink",

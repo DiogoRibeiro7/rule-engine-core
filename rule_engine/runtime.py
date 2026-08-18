@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from math import ceil
@@ -12,6 +13,7 @@ from .models import (
     EmittedAlert,
     EngineConfig,
     EvaluationResult,
+    LateEventMetrics,
     ReplayDeliveryReport,
     RuleMetadata,
 )
@@ -25,6 +27,7 @@ from .window import EntityWindow
 
 _DURATION_RE = re.compile(r"^(?P<value>\d+)(?P<unit>[smhd])$")
 _TEMPLATE_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
+_LATE_EVENT_POLICIES = {"reject", "drop"}
 _TRIGGER_TYPES = {"event", "window", "absence", "composite", "scheduled"}
 _CONDITION_OPERATORS = {"AND", "OR"}
 _COMPARISON_OPERATORS = {"eq", "ne", "gt", "gte", "lt", "lte"}
@@ -32,14 +35,20 @@ NumericSeries = List[float]
 BucketedNumericSeries = List[NumericSeries]
 
 
-def parse_duration(value: Optional[str]) -> Optional[timedelta]:
+def parse_duration(value: Optional[str], allow_zero: bool = False) -> Optional[timedelta]:
+    """Parse a duration literal such as ``30s`` or ``48h``.
+
+    Window and timeout durations must be positive, so zero is rejected by
+    default. Tolerances such as ``allowed_lateness`` pass ``allow_zero=True``,
+    where ``0s`` is a meaningful value rather than a mistake.
+    """
     if value is None:
         return None
     match = _DURATION_RE.fullmatch(value.strip())
     if match is None:
         raise ValueError(f"Unsupported duration: {value}")
     amount = int(match.group("value"))
-    if amount <= 0:
+    if amount < 0 or (amount == 0 and not allow_zero):
         raise ValueError(f"Duration must be greater than zero: {value}")
     unit = match.group("unit")
     if unit == "s":
@@ -90,6 +99,7 @@ class CompiledRule:
     source_timeouts: Dict[str, timedelta] = field(default_factory=dict)
     cron: Optional[str] = None
     lookback: Optional[timedelta] = None
+    allowed_lateness: timedelta = timedelta(0)
 
     @classmethod
     def from_declarative(cls, rule: DeclarativeRule) -> "CompiledRule":
@@ -168,6 +178,10 @@ class CompiledRule:
         if trigger_type == "scheduled" and not rule.trigger.cron:
             raise ValueError(f"Scheduled rule {rule.rule_id} requires trigger.cron")
 
+        allowed_lateness = parse_duration(rule.allowed_lateness, allow_zero=True) or timedelta(0)
+        if allowed_lateness < timedelta(0):
+            raise ValueError(f"Rule {rule.rule_id} requires a non-negative allowed_lateness")
+
         return cls(
             rule_id=rule.rule_id,
             description=rule.description,
@@ -184,6 +198,7 @@ class CompiledRule:
             source_timeouts=source_timeouts,
             cron=rule.trigger.cron,
             lookback=lookback,
+            allowed_lateness=allowed_lateness,
         )
 
     def matches_event(self, event: SensorEvent) -> bool:
@@ -240,6 +255,16 @@ def _render_template(template: str, variables: Dict[str, Any]) -> str:
         return str(value) if value is not None else match.group(0)
 
     return _TEMPLATE_RE.sub(replacer, template)
+
+
+def _insert_event_in_order(events: List[SensorEvent], event: SensorEvent) -> None:
+    """Insert into a timestamp-ordered buffer.
+
+    delta and rate read values[-1] - values[0], so a late event appended at the
+    end would silently corrupt them.
+    """
+    index = bisect_right([existing.timestamp for existing in events], event.timestamp)
+    events.insert(index, event)
 
 
 def _normalize_datetime(value: datetime) -> datetime:
@@ -388,9 +413,7 @@ def _evaluate_aggregation(
 
     if aggregation.sub_window is not None:
         if aggregation.field is None:
-            raise ValueError(
-                f"Aggregation {aggregation.agg_id} sub_window requires a source field"
-            )
+            raise ValueError(f"Aggregation {aggregation.agg_id} sub_window requires a source field")
         bucketed_values: BucketedNumericSeries = [
             bucket
             for bucket in _chunk_values(
@@ -527,6 +550,16 @@ class CompiledEngine:
             else None
         )
         self.sink_registry = sink_registry or SinkRegistry()
+        if self.config.late_event_policy not in _LATE_EVENT_POLICIES:
+            supported = ", ".join(sorted(_LATE_EVENT_POLICIES))
+            raise ValueError(
+                f"Unsupported late_event_policy '{self.config.late_event_policy}'; "
+                f"supported policies: {supported}"
+            )
+        self._max_allowed_lateness = max(
+            (rule.allowed_lateness for rule in self.rules), default=timedelta(0)
+        )
+        self._late_event_metrics = LateEventMetrics()
 
     def replay(
         self, events: Iterable[SensorEvent], until: Optional[datetime] = None
@@ -571,12 +604,7 @@ class CompiledEngine:
     def process_event(self, event: SensorEvent) -> List[EmittedAlert]:
         timestamp = event.timestamp
         if self._watermark is not None and timestamp < self._watermark:
-            raise ValueError(
-                f"Event for entity {event.entity_id!r} at {timestamp.isoformat()} predates "
-                f"the current watermark {self._watermark.isoformat()}. The engine evaluates "
-                "events in event-time order; sort events before feeding them in, or use "
-                "replay(), which sorts a batch for you."
-            )
+            return self._handle_late_event(event, self._watermark - timestamp)
         emitted = self.advance_to(timestamp)
         self._register_entity(event.entity_id)
         entity_states = self._entities[event.entity_id]
@@ -599,6 +627,69 @@ class CompiledEngine:
                     state.composite_active = self._composite_condition_active(rule, state)
 
         self._watermark = timestamp
+        return emitted
+
+    def late_event_metrics(self) -> LateEventMetrics:
+        """Counts of events seen behind the watermark since the engine was built."""
+        return self._late_event_metrics
+
+    def _handle_late_event(self, event: SensorEvent, lateness: timedelta) -> List[EmittedAlert]:
+        """Route an event that arrived behind the watermark.
+
+        The watermark never moves backward here: timers have already fired up to
+        it, so rewinding would produce inconsistent results. A tolerated late
+        event is folded into rule state in place instead.
+        """
+        metrics = self._late_event_metrics
+        metrics.total += 1
+
+        if lateness > self._max_allowed_lateness:
+            if self.config.late_event_policy == "reject":
+                metrics.rejected += 1
+                raise ValueError(
+                    f"Event for entity {event.entity_id!r} at {event.timestamp.isoformat()} is "
+                    f"{lateness} behind the watermark, which exceeds the largest declared "
+                    f"allowed_lateness ({self._max_allowed_lateness}). Raise allowed_lateness "
+                    "on the rule, set EngineConfig.late_event_policy='drop' to discard such "
+                    "events, or use replay(), which sorts a batch for you."
+                )
+            metrics.dropped += 1
+            return []
+
+        self._register_entity(event.entity_id)
+        entity_states = self._entities[event.entity_id]
+        emitted: List[EmittedAlert] = []
+        accepted_by_any = False
+
+        for rule in self.rules:
+            if not rule.applies_to_entity(event.entity_id):
+                continue
+            if lateness > rule.allowed_lateness:
+                metrics.per_rule_dropped[rule.rule_id] = (
+                    metrics.per_rule_dropped.get(rule.rule_id, 0) + 1
+                )
+                continue
+
+            accepted_by_any = True
+            metrics.per_rule_accepted[rule.rule_id] = (
+                metrics.per_rule_accepted.get(rule.rule_id, 0) + 1
+            )
+            state = entity_states[rule.rule_id]
+            if rule.trigger_type in {"window", "scheduled"}:
+                _insert_event_in_order(state.buffered_events, event)
+            if rule.matches_event(event):
+                # last_seen tracks the newest observation, so a late event must
+                # never drag it backward.
+                previous = state.last_seen.get(event.sensor_type)
+                if previous is None or event.timestamp > previous:
+                    state.last_seen[event.sensor_type] = event.timestamp
+                if rule.trigger_type == "event":
+                    emitted.extend(self._evaluate_event_rule(rule, event))
+
+        if accepted_by_any:
+            metrics.accepted += 1
+        else:
+            metrics.dropped += 1
         return emitted
 
     def advance_to(self, target: datetime) -> List[EmittedAlert]:

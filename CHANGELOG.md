@@ -33,6 +33,13 @@ Suggested `Upgrade Notes` format:
 
 ### Added
 
+- `allowed_lateness`, an optional per-rule duration declaring how far behind the
+  watermark an event may arrive and still be considered. Defaults to `0s`, and
+  accepts `0s` explicitly.
+- `EngineConfig.late_event_policy` (`reject` by default, or `drop`) governing
+  events later than any rule tolerates.
+- `CompiledEngine.late_event_metrics()` returning a typed `LateEventMetrics`
+  with totals, per-rule breakdown, and `to_dict()`/`to_json()` exports.
 - `CompiledEngine.watermark` exposes the current event-time watermark.
 - Watermark regression tests covering out-of-order events, backward
   `advance_to` targets, and batches that predate the watermark.
@@ -47,6 +54,11 @@ Suggested `Upgrade Notes` format:
   timer behaviour.
 - `sample_rules/source_gap.yaml` now posts to the reserved `example.com`
   documentation domain instead of a domain-specific host.
+- Late events within tolerance are inserted into window buffers in timestamp
+  order rather than appended, because `delta` and `rate` read
+  `values[-1] - values[0]` and appending would have corrupted them.
+- `parse_duration` takes an `allow_zero` flag so tolerance fields can accept
+  `0s` while window and timeout durations still require a positive value.
 
 ### Fixed
 
@@ -61,6 +73,11 @@ Suggested `Upgrade Notes` format:
   accepted.
 - If you relied on `advance_to` accepting an earlier target as a no-op, it now
   raises. Track the current position with `CompiledEngine.watermark`.
+- Out-of-order events still raise by default. To tolerate them, declare
+  `allowed_lateness` on the rules that should accept them; to discard them
+  instead of raising, set `EngineConfig.late_event_policy='drop'`.
+- A tolerated late event does not recompute a window that has already closed.
+  That needs alert retraction and is tracked in `ROADMAP.md`.
 
 ## 0.1.0 - 2026-08-18
 

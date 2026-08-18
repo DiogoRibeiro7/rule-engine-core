@@ -89,10 +89,13 @@ alerts, which is what makes the golden-file tests possible. Timer-driven rules
 clock, so `--until` can push the engine past the final event.
 
 Event-time order is enforced rather than assumed. `replay()` sorts a batch
-before evaluating it, but feeding `process_event()` an event that predates the
-current watermark, or calling `advance_to()` with an earlier target, raises
-instead of silently rewinding time. `CompiledEngine.watermark` exposes the
-current position. Deliberate late-event policies are planned — see `ROADMAP.md`.
+before evaluating it; `advance_to()` refuses an earlier target. A rule can
+declare `allowed_lateness` to tolerate events arriving behind the watermark,
+which are folded into rule state in place without rewinding time. Anything
+later than that is governed by `EngineConfig.late_event_policy` — `reject`
+(default) or `drop`. `CompiledEngine.watermark` exposes the current position and
+`late_event_metrics()` reports what arrived late. See `docs/rule-language.md`
+for the exact semantics.
 
 **3. Deliver** — `rule_engine/sinks.py`
 

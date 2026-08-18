@@ -10,7 +10,7 @@ A rule document must be a YAML object with:
 
 - required: `rule_id`, `actions`
 - exactly one of: `source` or `sources`
-- optional: `description`, `trigger`, `condition`, `aggregations`
+- optional: `description`, `trigger`, `condition`, `aggregations`, `allowed_lateness`
 
 Top-level unknown fields are rejected.
 
@@ -128,6 +128,45 @@ Rejected fields:
 - `duration`
 - `slide`
 - `timeout`
+
+## Late Events
+
+`allowed_lateness` is an optional top-level duration declaring how far behind
+the engine watermark an event for this rule may arrive and still be considered.
+It defaults to `0s`, and unlike other durations it accepts `0s` explicitly,
+because zero tolerance is a meaningful setting rather than a mistake.
+
+```yaml
+rule_id: reading_spike
+allowed_lateness: 5m
+```
+
+An event whose timestamp is behind the watermark is *late*. Lateness is compared
+inclusively: an event exactly `allowed_lateness` behind the watermark is still
+in range.
+
+- **Within tolerance.** The event is folded into rule state in place. The
+  watermark does not move backward, and no timers re-fire. `event` triggers are
+  evaluated and may emit; `window` and `scheduled` buffers receive the event in
+  timestamp order; `last_seen` is only advanced, never dragged backward.
+- **Beyond tolerance.** Governed by `EngineConfig.late_event_policy`, which is
+  engine-level rather than per-rule because it decides the fate of an event no
+  rule can use. `reject` (the default) raises; `drop` discards and counts it.
+
+Because tolerance is per-rule, one event can be within range for one rule and
+beyond it for another. The engine compares against the largest declared
+tolerance, then each rule applies its own; `CompiledEngine.late_event_metrics()`
+reports both the totals and the per-rule breakdown.
+
+`replay()` sorts a batch before evaluating it, so lateness only arises when
+feeding `process_event` directly or replaying a later batch first.
+
+### Not Yet Handled
+
+A tolerated late event does **not** recompute a window that has already closed
+and emitted. Reopening a closed window requires retracting the alert it already
+produced, which needs the alert lifecycle work tracked in `ROADMAP.md`. Today a
+late event only affects windows still open when it arrives.
 
 ## Duration Format
 
@@ -343,6 +382,8 @@ Not supported by the current repo surface:
 - sink types beyond the implemented set
 - live streaming ingestion
 - workflow orchestration or stateful infrastructure integrations
+- recomputing windows that have already closed when a late event arrives
+- per-source or per-entity watermarks; the watermark is engine-wide
 
 ## Source Of Truth
 
