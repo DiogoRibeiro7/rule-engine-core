@@ -56,6 +56,11 @@ Suggested `Upgrade Notes` format:
 - Repository naming and public docs are now generic and no longer tied to a
   domain-specific engine name.
 - README and roadmap now track repo truth instead of aspirational features.
+- README is now restructured around what the runtime is and how it works,
+  with a worked example, trigger/sink reference tables, and incremental
+  "now supports" notes moved here instead.
+- README now documents that the CLI runs without a sink registry, so declared
+  sinks report as `unsupported` rather than delivering.
 
 ## 0.1.0
 

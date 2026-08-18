@@ -1,169 +1,148 @@
 # Rule Engine Core
 
-This repository contains the core runtime for a generic declarative rule engine.
-It currently provides an executable in-memory replay engine and is being
-extended toward a fully implemented sink delivery system.
+A declarative rule engine for event streams — write conditions in YAML, evaluate
+them deterministically over timestamped events, and deliver the resulting alerts
+through reliable sink adapters.
 
 ![Rule Engine Core architecture](docs/architecture.svg)
 
-## Current State
+## What this is
 
-- Canonical runtime model: keyed execution with domain-specific identifiers supplied by the caller.
-- Entities are keyed by caller-supplied identifiers, with `rule_id` used as the per-rule namespace.
-- Declarative rules now compile into executable in-memory runtime objects.
-- Compile-time rule loading is now separated from execution through `rule_engine.compiler` and `CompiledEngine`.
-- Declarative rules are schema-validated at load time with path-aware errors for malformed YAML and bad field shapes.
-- Trigger fields, condition operators, duration values, and cron expressions are validated before execution.
-- Runtime startup behavior is configurable through `EngineConfig` and explicit sink-registry injection.
-- Embedding code can now consume typed `RuleMetadata` and `EvaluationResult` objects.
-- The core package now passes `mypy` and is checked for type regressions in CI.
-- Replay evaluation supports `event`, `window`, `absence`, `composite`, and `scheduled` triggers.
-- Unit tests assert alert behavior, timer expiry, and lookback handling.
-- Fixture-driven golden tests now lock replay JSON output for the sample scenarios.
-- The repo now includes neutral end-to-end examples across multiple domains.
-- A first-class sink contract now exists, with `stdout`, file, webhook, queue, and object-storage sinks implemented.
-- Declarative sink configs are validated at rule-load time and normalized onto canonical sink types.
-- Runtime sink dispatch now coerces validated sink dictionaries into explicit typed sink config objects.
-- Non-stdout sinks now share a single versioned delivery envelope with an explicit idempotency key.
-- Sink dispatch now supports bounded retries, configurable backoff, dead-letter recording, delivery metrics snapshots, and structured delivery logs.
-- Delivery observability now covers overall and per-sink counts, retry activity, unsupported routes, dead letters, and measured delivery latency.
-- End-to-end integration tests now exercise file, queue, object-storage, and webhook sink paths, including retry/dead-letter behavior.
-- Webhook sinks now support explicit auth headers and HMAC body signing through declarative config.
-- Embedders can now create standard sink registries through helper constructors instead of manual adapter wiring.
-- File-backed dead-letter storage now supports optional bounded retention and fsync-oriented persistence for stronger local fallback handling.
-- Typed delivery reports now include convenience query helpers for per-sink metrics, failed entries, and dead-letter inspection.
-- Typed delivery metrics snapshots and evaluation results now expose structured `to_dict()`/`to_json()` exports for downstream embedding code.
-- Failure paths across file, queue, object-storage, and webhook sinks now preserve consistent delivery metadata for downstream logging and dead-letter handling.
-- File and object-storage sinks now support explicit `timeout_s` handling for retryable delivery timeouts.
-- Replay execution can now return a typed delivery report, and the CLI can emit alerts plus delivery telemetry as JSON.
-- Scope boundaries are now explicit: replay-first execution, narrow cron support, five maintained sink adapters, and no domain-specific rule packs in-repo.
+This is a **complex event processing (CEP) runtime**: a small, embeddable library
+that turns declarative rules into executable objects and runs them against a
+stream of entity-keyed events. It handles the parts of that problem that are
+tedious to get right — event-time semantics, absence and window triggers, schema
+validation with useful errors, and at-least-once delivery with retries,
+idempotency keys, and dead letters.
 
-## Repository layout
+It is a library and a replay tool, not a running service. There is no ingestion
+layer, no scheduler daemon, and no UI. You either drive it from the CLI over an
+NDJSON file, or embed it in your own process.
 
-- `rule_engine/` — generic Python reference implementation.
-- `rule_engine/compiler.py` — compile-time API for turning declarative rules into executable runtime objects.
-- `rule_engine/api.py` — lightweight embedding API for building and replaying engines from code.
-- `rule_engine/models.py` — public runtime models for alerts, metadata, evaluation results, and engine config.
-- `tests/` — unit tests for rule semantics and timing behavior.
-- `tests/test_sink_integration.py` — end-to-end sink delivery integration coverage across success and failure paths.
-- `tests/fixtures/replay/` — golden replay cases and expected JSON outputs for sample scenarios.
-- `sample_rules/` — sample declarative rules used as reference fixtures.
-- `sample_data/` — NDJSON fixtures for replay-based tests and demos.
-- `docs/examples.md` — small multi-domain examples that show how the same engine shape is reused.
-- `docs/architecture.svg` — public-facing architecture diagram for repo pages and social sharing.
-- `docs/architecture-notes.md` — compile/runtime/sink boundary notes mapped to the actual modules.
-- `docs/delivery-contract.md` — executable delivery envelope and sink-specific semantics.
-- `docs/embedding-examples.md` — focused Python embedding patterns for compiled rules, sink setup, and report inspection.
-- `docs/scope-boundary.md` — explicit repo scope decisions and out-of-scope lines.
-- `docs/rule-language.md` — exact supported declarative rule-language subset.
-- `docs/linkedin-project-kit.md` — reusable LinkedIn project copy, post text, and publishing checklist.
-- `CONTRIBUTING.md` — contributor workflow and repo-specific change rules.
-- `CHANGELOG.md` — user-visible repo history and release notes.
-- `ROADMAP.md` — prioritized next steps for stabilizing and extending the engine.
-- `LICENSE` — MIT license for public reuse.
+The engine is domain-neutral. Events are `entity_id` + `sensor_type` + values +
+timestamp; everything domain-specific lives in the rules you write.
 
-## Scope
+## Example
 
-What this repo is:
+A rule (`sample_rules/examples/facility_temperature_spike.yaml`):
 
-- a core rule-evaluation runtime
-- a declarative YAML rule compiler/executor
-- a compile/runtime split that supports embedding compiled rules without going through the CLI
-- an explicit engine-configuration surface for runtime startup and scheduling behavior
-- a lightweight embedding API for building engines from YAML, files, or precompiled rules
-- typed metadata and evaluation result objects for embedding and inspection
-- cleaner module boundaries between execution logic and public runtime models
-- a replay engine for deterministic testing and validation
-- the base for sink delivery adapters, with `stdout`, file, webhook, queue, and object-storage support already present
-- an explicit sink configuration grammar with canonical sink names
-- a formal declarative rule schema with fail-fast load-time validation
-- compile-time validation for trigger semantics, durations, cron syntax, and condition grammar edges
-- a delivery layer with retry, backoff, dead-letter, delivery-metrics, and structured-delivery-log primitives
-- a bounded file-backed dead-letter fallback with optional stronger local persistence semantics
-- explicit typed sink configuration objects behind the declarative YAML surface
-- a versioned delivery envelope with a deterministic idempotency key for implemented sinks
-- a replay/report surface for downstream tooling and automation
-- structured export helpers for typed delivery metrics, reports, and evaluation results
-- consistent sink failure metadata for downstream inspection and persistence
-- explicit timeout controls on file and object-storage delivery paths
-- a type-checked core package with CI enforcement
-
-What this repo is not yet:
-
-- a production streaming platform
-- a complete sink delivery system
-- a workflow orchestration tool
-- a UI or rule-management product
-
-## Quick start
-
-Install the development dependencies:
-
-```bash
-python -m pip install -e .[dev]
+```yaml
+rule_id: facility_temperature_spike
+description: Emit when a facility temperature reading exceeds the threshold
+trigger:
+  type: event
+sources:
+  - sensor_type: facility_temperature
+    entity_id: "*"
+condition:
+  operator: AND
+  operands:
+    - metric: value
+      operator: gt
+      value: 85
+actions:
+  - severity: critical
+    message: "High facility temperature for {{entity_id}}: {{value}}"
+    sinks:
+      - type: stdout
 ```
 
-Run the reference tests:
+Events are NDJSON:
 
-```bash
-python -m pytest
+```json
+{"entity_id":"facility-1","sensor_type":"facility_temperature","value":81.0,"timestamp_ms":1704067200000}
+{"entity_id":"facility-1","sensor_type":"facility_temperature","value":91.0,"timestamp_ms":1704067260000}
 ```
 
-Run the linter:
+Replay them:
 
 ```bash
-python -m ruff check .
+python -m rule_engine.runner \
+  sample_rules/examples/facility_temperature_spike.yaml \
+  --events sample_data/examples/facility_temperature_spike.ndjson
 ```
 
-Run type checking:
-
-```bash
-python -m mypy
+```text
+2024-01-01T00:01:00+00:00 entity=facility-1 rule=facility_temperature_spike severity=critical message=High facility temperature for facility-1: 91.0
 ```
 
-Auto-format the repo:
+## How it works
 
-```bash
-python -m ruff format .
+Three stages, deliberately separated so each can be used on its own.
+
+**1. Compile** — `rule_engine/declarative.py`, `rule_engine/compiler.py`
+
+Declarative YAML is validated against a formal schema and compiled into runtime
+objects before anything executes. Trigger fields, condition operators, duration
+strings, cron expressions, and sink configs all fail fast at load time with
+path-aware errors rather than surfacing mid-replay.
+
+**2. Execute** — `rule_engine/runtime.py`
+
+`CompiledEngine` evaluates compiled rules against events in time order, keyed by
+caller-supplied `entity_id` with `rule_id` as the per-rule namespace. Execution
+is deterministic: the same events and the same watermark always produce the same
+alerts, which is what makes the golden-file tests possible. Timer-driven rules
+(`absence`, `scheduled`) advance via an explicit watermark rather than wall
+clock, so `--until` can push the engine past the final event.
+
+**3. Deliver** — `rule_engine/sinks.py`
+
+Alerts are dispatched through a `SinkRegistry` of adapters. Non-stdout sinks
+share one versioned delivery envelope carrying a deterministic idempotency key.
+Dispatch supports bounded retries with configurable backoff, dead-letter
+recording (in-memory or file-backed, with optional retention bounds and fsync),
+and a metrics snapshot covering per-sink counts, retry activity, unsupported
+routes, and measured latency.
+
+### Triggers
+
+| Type | Fires when |
+| --- | --- |
+| `event` | A matching event satisfies the condition |
+| `window` | An aggregate over a time window satisfies the condition |
+| `absence` | No matching event arrives within a timeout |
+| `composite` | Per-source `absence` timers combine under the rule's `AND`/`OR` operator |
+| `scheduled` | A cron expression elapses |
+
+Aggregations available to `window` rules: `count`, `sum`, `mean`, `min`,
+`max`, `stddev`, `delta`, `rate`, and `percentile`, optionally bucketed by a
+`sub_window`.
+
+### Sinks
+
+| Type | Notes |
+| --- | --- |
+| `stdout` | Local development and debugging |
+| `file` | Append-oriented local output, with `timeout_s` |
+| `webhook` | Auth headers and HMAC body signing |
+| `queue` | Pluggable `QueueTransport` |
+| `object_storage` | Pluggable `ObjectStorageTransport`, with `timeout_s` |
+
+## Embedding
+
+The high-level API covers most cases:
+
+```python
+from rule_engine import build_engine_from_yaml, create_sink_registry
+
+sink_registry = create_sink_registry(
+    dead_letter_path="output/dead_letters.ndjson",
+    dead_letter_max_records=1000,
+    dead_letter_fsync=True,
+)
+
+embedded = build_engine_from_yaml([yaml_text], sink_registry=sink_registry)
+result = embedded.evaluate(events)
+
+alerts = result.alerts
+metadata = embedded.rule_metadata()
+failed = result.delivery_report.failed_entries()
+metrics = result.delivery_report.delivery_metrics.to_dict()
 ```
 
-Run a declarative YAML rule demo:
-
-```bash
-python -m rule_engine.runner sample_rules/source_gap.yaml
-```
-
-Replay a declarative YAML rule against a sample NDJSON event fixture:
-
-```bash
-python -m rule_engine.runner sample_rules/source_gap.yaml --events sample_data/source_gap_events.ndjson
-```
-
-Replay a timer-driven rule and advance the engine past the final event:
-
-```bash
-python -m rule_engine.runner sample_rules/dual_source_gap.yaml --events sample_data/dual_source_gap_events.ndjson --until 2023-11-15T12:26:40+00:00
-```
-
-Replay one of the neutral example scenarios:
-
-```bash
-python -m rule_engine.runner sample_rules/examples/facility_temperature_spike.yaml --events sample_data/examples/facility_temperature_spike.ndjson
-```
-
-Emit replay alerts together with the delivery report as JSON:
-
-```bash
-python -m rule_engine.runner sample_rules/dual_source_gap.yaml --events sample_data/dual_source_gap_events.ndjson --until 2023-11-15T12:26:40+00:00 --delivery-report-json
-```
-
-Emit the declarative rule schema as JSON:
-
-```bash
-python -m rule_engine.runner --rule-schema
-```
-
-Embed the runtime from Python using the compile/runtime split:
+Drop to the compiler directly when you want to own compilation and reuse
+compiled rules across engines:
 
 ```python
 from rule_engine.compiler import compile_rule
@@ -174,94 +153,108 @@ compiled_rule = compile_rule(load_rule_yaml(yaml_text))
 engine = CompiledEngine(
     [compiled_rule],
     config=EngineConfig(initial_watermark=start_time),
+    sink_registry=sink_registry,
 )
 alerts = engine.replay(events)
 ```
 
-Use the higher-level embedding API when you do not need to manage the compiler directly:
+`EvaluationResult`, `RuleMetadata`, `ReplayDeliveryReport`, and
+`DeliveryMetricsSnapshot` are typed objects with `to_dict()` / `to_json()`
+exports for downstream tooling. See `docs/embedding-examples.md` for more
+patterns.
 
-```python
-from rule_engine.api import build_engine_from_yaml
+## CLI
 
-embedded = build_engine_from_yaml([yaml_text])
-result = embedded.evaluate(events)
-alerts = result.alerts
-metadata = embedded.rule_metadata()
-failed = result.delivery_report.failed_entries()
-report_payload = result.delivery_report.to_dict()
-metrics_json = result.delivery_report.delivery_metrics.to_json()
+```bash
+# Evaluate rules against an event fixture
+python -m rule_engine.runner RULE.yaml --events EVENTS.ndjson
+
+# Advance timers past the final event (absence and scheduled rules)
+python -m rule_engine.runner RULE.yaml --events EVENTS.ndjson --until 2023-11-15T12:26:40+00:00
+
+# Emit alerts plus the delivery report as JSON
+python -m rule_engine.runner RULE.yaml --events EVENTS.ndjson --delivery-report-json
+
+# Inspect the compiled runtime model, or the schemas
+python -m rule_engine.runner RULE.yaml --json
+python -m rule_engine.runner --schema
+python -m rule_engine.runner --rule-schema
 ```
 
-Create a standard sink registry for embedding without hand-wiring each adapter:
+Note: the CLI constructs its engine without a sink registry and prints alerts
+using its own formatter. Sinks declared in a rule are reported as `unsupported`
+in the delivery report rather than delivered. Actual sink delivery requires
+embedding the engine with a registry, as shown above.
 
-```python
-from rule_engine import build_engine_from_yaml, create_sink_registry
+## Scope
 
-sink_registry = create_sink_registry(
-    dead_letter_path="output/dead_letters.ndjson",
-    dead_letter_max_records=1000,
-    dead_letter_fsync=True,
-)
-embedded = build_engine_from_yaml([yaml_text], sink_registry=sink_registry)
+What this repo is:
+
+- a deterministic, replay-first CEP runtime with a documented rule language
+- a compile/runtime split that supports embedding compiled rules without the CLI
+- a typed public API — metadata, evaluation results, delivery reports
+- a delivery layer with retry, backoff, dead letters, and metrics
+- a type-checked package with lint and `mypy` enforced in CI
+
+What this repo is not:
+
+- a production streaming platform
+- a workflow orchestration tool
+- a UI or rule-management product
+- a home for domain-specific rule packs
+
+`docs/scope-boundary.md` records why each of those lines is where it is,
+including the deliberately narrow cron support and the fixed five-adapter sink
+surface.
+
+## Development
+
+```bash
+python -m pip install -e .[dev]
+
+python -m pytest            # tests, including golden replay fixtures
+python -m ruff check .      # lint
+python -m ruff format .     # format
+python -m mypy              # type check
 ```
 
-For a fuller set of Python embedding patterns, see `docs/embedding-examples.md`.
+Requires Python 3.11+. The only runtime dependency is PyYAML.
 
-## Supported Language
+## Repository layout
 
-The exact supported declarative subset is documented in
-`docs/rule-language.md`. Use that file as the repo-level contract for:
+| Path | Contents |
+| --- | --- |
+| `rule_engine/` | The library |
+| `rule_engine/compiler.py` | YAML to executable runtime objects |
+| `rule_engine/declarative.py` | Rule schema and load-time validation |
+| `rule_engine/runtime.py` | `CompiledEngine`, triggers, evaluation |
+| `rule_engine/sinks.py` | Sink adapters, retries, dead letters, metrics |
+| `rule_engine/api.py` | High-level embedding API |
+| `rule_engine/models.py` | Public typed models |
+| `rule_engine/runner.py` | CLI |
+| `tests/` | Unit, integration, and golden replay tests |
+| `tests/fixtures/replay/` | Golden replay cases and expected JSON |
+| `sample_rules/`, `sample_data/` | Reference rules and NDJSON fixtures |
 
-- trigger types and allowed trigger fields
-- duration and cron syntax
-- condition and operand operators
-- aggregation functions
-- sink configuration grammar
-- explicitly unsupported features
+## Documentation
 
-## Delivery Contract
+| Document | Purpose |
+| --- | --- |
+| `docs/rule-language.md` | The supported declarative subset — the language contract |
+| `docs/delivery-contract.md` | Delivery envelope, retryability, per-sink semantics |
+| `docs/architecture-notes.md` | Compile/runtime/sink boundaries mapped to modules |
+| `docs/embedding-examples.md` | Python embedding patterns |
+| `docs/examples.md` | Multi-domain example scenarios |
+| `docs/scope-boundary.md` | Scope decisions and out-of-scope lines |
+| `CONTRIBUTING.md` | Contributor workflow |
+| `CHANGELOG.md` | User-visible history |
+| `ROADMAP.md` | Post-core backlog |
 
-The implemented sink delivery contract lives in `docs/delivery-contract.md`.
-That file defines the shared payload envelope, retryability expectations, and
-sink-specific semantics for the currently supported adapters, including
-concrete payload and metadata examples.
+Licensed under MIT.
 
-## Examples
+## Maintenance rule
 
-Small neutral examples live in `docs/examples.md` and the matching checked-in
-fixtures under `sample_rules/examples/` and `sample_data/examples/`.
-
-## Public Presentation
-
-The repository is public and intended to be linkable as a portfolio project.
-Use `docs/architecture.svg` for visual context and `docs/linkedin-project-kit.md`
-for ready-to-publish LinkedIn project text and post copy.
-
-For the internal compile/runtime/sink boundary explanation, use
-`docs/architecture-notes.md`.
-
-## Roadmap Alignment
-
-This repository is organized around a single canonical runtime model. The
-runtime package is generic and can be reused for domains that fit the same
-event-and-timer evaluation model.
-
-The initial core build-out is complete: the repo now has the replay runtime,
-typed sink system, delivery contract, integration coverage, and explicit scope
-boundaries it set out to establish. `ROADMAP.md` now tracks the remaining
-post-core backlog rather than the original construction phases.
-
-The explicit scope decisions for that target now live in
-`docs/scope-boundary.md`.
-
-## Project Docs
-
-The contributor workflow lives in `CONTRIBUTING.md`, and user-visible repo
-history lives in `CHANGELOG.md`.
-
-## Maintenance Rule
-
-`README.md` should describe the current repo truth, not the intended future
-state. When the runtime surface, supported rule language, or sink delivery
-capabilities change, update this file in the same change set.
-
+This file describes current repo truth, not intended future state. When the
+runtime surface, rule language, or delivery capabilities change, update this
+file in the same change set. Incremental "now supports X" notes belong in
+`CHANGELOG.md`.
