@@ -29,10 +29,14 @@ Suggested `Upgrade Notes` format:
   Existing configs remain valid.
 ```
 
-## Unreleased
+## 0.1.0 - 2026-08-18
+
+First tagged release. Archived on Zenodo with a DOI.
 
 ### Added
 
+- Initial public reference implementation of the in-memory declarative rule
+  engine core.
 - Formal declarative rule schema validation with path-aware YAML errors.
 - Compile-time validation for trigger fields, durations, cron expressions, and
   supported condition operators.
@@ -69,9 +73,7 @@ Suggested `Upgrade Notes` format:
 - README now documents that the CLI runs without a sink registry, so declared
   sinks report as `unsupported` rather than delivering.
 
-## 0.1.0
+### Fixed
 
-### Added
-
-- Initial public reference implementation of the in-memory declarative rule
-  engine core.
+- CLI `main()` declared `argv` as `Iterable[str] | None`, which
+  `argparse.parse_args` rejects under `mypy`; it is now `Sequence[str] | None`.

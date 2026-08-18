@@ -38,6 +38,6 @@ keywords:
   - dead-letter queue
   - observability
   - Python
-# Set at release time, alongside the tag and the Zenodo DOI:
-# date-released: YYYY-MM-DD
+date-released: 2026-08-18
+# Added once Zenodo has archived this release:
 # doi: 10.5281/zenodo.XXXXXXX
