@@ -41,6 +41,12 @@ Suggested `Upgrade Notes` format:
 - `CompiledEngine.late_event_metrics()` returning a typed `LateEventMetrics`
   with totals, per-rule breakdown, and `to_dict()`/`to_json()` exports.
 - `CompiledEngine.watermark` exposes the current event-time watermark.
+- `CompiledEngine.snapshot()` and `CompiledEngine.restore()` for checkpoint and
+  recovery, with a typed, versioned, JSON-serializable `EngineSnapshot` covering
+  the watermark, per-entity rule state, pending timers, in-flight window
+  buffers, and late-event counters.
+- `CompiledRule.state_fingerprint()`, a structural hash used to refuse a restore
+  into a rule whose windows, timers, or sources changed.
 - Watermark regression tests covering out-of-order events, backward
   `advance_to` targets, and batches that predate the watermark.
 

@@ -174,6 +174,18 @@ alerts = engine.replay(events)
 exports for downstream tooling. See `docs/embedding-examples.md` for more
 patterns.
 
+Long-running embedders can checkpoint and resume:
+
+```python
+snapshot = engine.snapshot()          # watermark, timers, windows, counters
+resumed = CompiledEngine.restore(snapshot, compiled_rules)
+```
+
+Snapshots are JSON-serializable and carry a structural fingerprint per rule, so
+restoring into a rule whose windows or timers changed raises rather than
+silently reinterpreting state. Resuming from a checkpoint yields the same
+alerts as an uninterrupted replay.
+
 ## CLI
 
 ```bash

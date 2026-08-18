@@ -18,6 +18,7 @@ from .engine import RuleEngine
 from .models import (
     EmittedAlert,
     EngineConfig,
+    EngineSnapshot,
     EvaluationResult,
     LateEventMetrics,
     ReplayDeliveryReport,
@@ -76,6 +77,7 @@ __all__ = [
     "EmbeddedEngine",
     "EmittedAlert",
     "EngineConfig",
+    "EngineSnapshot",
     "EvaluationResult",
     "LateEventMetrics",
     "EntityWindow",

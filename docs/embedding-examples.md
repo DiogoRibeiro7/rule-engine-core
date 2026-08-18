@@ -137,7 +137,53 @@ Useful helpers:
 - `result.delivery_report.failed_entries()`
 - `result.delivery_report.dead_letter_entries()`
 
-## 7. When To Use Which Surface
+## 7. Checkpoint And Resume
+
+`snapshot()` captures the watermark, per-entity rule state, pending timers,
+in-flight window buffers, and late-event counters. `restore()` rebuilds an
+engine from it. Both sides are JSON-serializable, so a checkpoint can be written
+to disk or an object store between runs.
+
+```python
+from rule_engine import CompiledEngine, EngineSnapshot
+
+engine = CompiledEngine(compiled_rules)
+engine.replay(first_batch)
+
+with open("checkpoint.json", "w", encoding="utf-8") as handle:
+    handle.write(engine.snapshot().to_json(indent=2))
+
+# ... later, in a new process ...
+
+with open("checkpoint.json", "r", encoding="utf-8") as handle:
+    snapshot = EngineSnapshot.from_json(handle.read())
+
+resumed = CompiledEngine.restore(snapshot, compiled_rules)
+alerts = resumed.replay(next_batch)
+```
+
+Resuming from a checkpoint produces the same alerts as an uninterrupted replay
+of the whole stream, including timers that were pending and windows that were
+still open when the snapshot was taken.
+
+### Rule changes between checkpoints
+
+A snapshot records a structural fingerprint of each rule, covering the fields
+that give retained state its meaning: trigger type, entity filter, sources,
+window duration and slide, timeouts, cron, and lookback. Restoring into a rule
+whose fingerprint changed raises, because the stored state no longer describes
+the same thing.
+
+Cosmetic edits do not invalidate a checkpoint. Message templates, severities,
+sinks, and condition operands are excluded from the fingerprint, so tuning a
+threshold or rewording an alert lets an existing snapshot restore cleanly.
+
+Rules present only in the snapshot are dropped, and rules present only in the
+new rule set start with empty state, so adding and removing rules between
+checkpoints is supported. The snapshot watermark takes precedence over
+`EngineConfig.initial_watermark`.
+
+## 8. When To Use Which Surface
 
 - Use `build_engine_from_yaml(...)` for the smallest embedding surface.
 - Use `build_engine_from_files(...)` when files are the deployment artifact.

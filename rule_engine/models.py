@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -112,6 +113,58 @@ class EvaluationResult:
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), indent=2)
+
+
+SNAPSHOT_VERSION = 1
+
+
+@dataclass
+class EngineSnapshot:
+    """Serializable engine state: watermark, per-entity rule state, counters.
+
+    ``rule_fingerprints`` records the state-shaping structure of each rule at
+    snapshot time so that restoring into a rule whose windows or timers changed
+    fails loudly instead of reinterpreting state that no longer means the same
+    thing.
+    """
+
+    watermark: Optional[str] = None
+    entities: Dict[str, Dict[str, Dict[str, Any]]] = field(default_factory=dict)
+    rule_fingerprints: Dict[str, str] = field(default_factory=dict)
+    late_event_metrics: Dict[str, Any] = field(default_factory=dict)
+    version: int = SNAPSHOT_VERSION
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "version": self.version,
+            "watermark": self.watermark,
+            "rule_fingerprints": dict(self.rule_fingerprints),
+            "entities": deepcopy(self.entities),
+            "late_event_metrics": deepcopy(self.late_event_metrics),
+        }
+
+    def to_json(self, indent: Optional[int] = None) -> str:
+        return json.dumps(self.to_dict(), indent=indent)
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "EngineSnapshot":
+        version = payload.get("version")
+        if version != SNAPSHOT_VERSION:
+            raise ValueError(
+                f"Unsupported snapshot version {version!r}; "
+                f"this build reads version {SNAPSHOT_VERSION}"
+            )
+        return cls(
+            watermark=payload.get("watermark"),
+            entities=deepcopy(payload.get("entities", {})),
+            rule_fingerprints=dict(payload.get("rule_fingerprints", {})),
+            late_event_metrics=deepcopy(payload.get("late_event_metrics", {})),
+            version=version,
+        )
+
+    @classmethod
+    def from_json(cls, text: str) -> "EngineSnapshot":
+        return cls.from_dict(json.loads(text))
 
 
 @dataclass

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import re
 from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from math import ceil
 from statistics import mean, pstdev
 from typing import Any, Dict, Iterable, List, Optional
@@ -12,6 +14,7 @@ from .declarative import Action, DeclarativeRule
 from .models import (
     EmittedAlert,
     EngineConfig,
+    EngineSnapshot,
     EvaluationResult,
     LateEventMetrics,
     ReplayDeliveryReport,
@@ -201,6 +204,31 @@ class CompiledRule:
             allowed_lateness=allowed_lateness,
         )
 
+    def state_fingerprint(self) -> str:
+        """Hash of the rule structure that gives stored state its meaning.
+
+        Covers triggers, windows, timers and sources. Deliberately excludes
+        message templates, severities, sinks and condition operands: those
+        change what a rule emits, not what its retained state means, so
+        editing them must not invalidate a snapshot.
+        """
+        structure = {
+            "trigger_type": self.trigger_type,
+            "entity_id_filter": self.entity_id_filter,
+            "sensor_types": sorted(self.sensor_types),
+            "duration": _seconds_or_none(self.duration),
+            "slide": _seconds_or_none(self.slide),
+            "timeout": _seconds_or_none(self.timeout),
+            "source_timeouts": {
+                sensor_type: timeout.total_seconds()
+                for sensor_type, timeout in sorted(self.source_timeouts.items())
+            },
+            "cron": self.cron,
+            "lookback": _seconds_or_none(self.lookback),
+        }
+        canonical = json.dumps(structure, sort_keys=True, separators=(",", ":"))
+        return sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
     def matches_event(self, event: SensorEvent) -> bool:
         if self.entity_id_filter != "*" and self.entity_id_filter != event.entity_id:
             return False
@@ -255,6 +283,65 @@ def _render_template(template: str, variables: Dict[str, Any]) -> str:
         return str(value) if value is not None else match.group(0)
 
     return _TEMPLATE_RE.sub(replacer, template)
+
+
+def _serialize_rule_state(state: "RuleState") -> Dict[str, Any]:
+    return {
+        "buffered_events": [
+            {
+                "entity_id": event.entity_id,
+                "sensor_type": event.sensor_type,
+                "value": event.value,
+                "timestamp_ms": event.timestamp_ms,
+            }
+            for event in state.buffered_events
+        ],
+        "last_seen": {
+            sensor_type: moment.isoformat() for sensor_type, moment in state.last_seen.items()
+        },
+        "absence_fired": state.absence_fired,
+        "source_absent": dict(state.source_absent),
+        "composite_active": state.composite_active,
+        "next_window_end": _iso_or_none(state.next_window_end),
+        "next_schedule_fire": _iso_or_none(state.next_schedule_fire),
+        "last_schedule_fire": _iso_or_none(state.last_schedule_fire),
+    }
+
+
+def _deserialize_rule_state(payload: Dict[str, Any]) -> "RuleState":
+    return RuleState(
+        buffered_events=[
+            SensorEvent(
+                entity_id=entry["entity_id"],
+                sensor_type=entry["sensor_type"],
+                value=entry["value"],
+                timestamp_ms=entry["timestamp_ms"],
+            )
+            for entry in payload.get("buffered_events", [])
+        ],
+        last_seen={
+            sensor_type: _normalize_datetime(datetime.fromisoformat(moment))
+            for sensor_type, moment in payload.get("last_seen", {}).items()
+        },
+        absence_fired=payload.get("absence_fired", False),
+        source_absent=dict(payload.get("source_absent", {})),
+        composite_active=payload.get("composite_active", False),
+        next_window_end=_datetime_or_none(payload.get("next_window_end")),
+        next_schedule_fire=_datetime_or_none(payload.get("next_schedule_fire")),
+        last_schedule_fire=_datetime_or_none(payload.get("last_schedule_fire")),
+    )
+
+
+def _seconds_or_none(value: Optional[timedelta]) -> Optional[float]:
+    return value.total_seconds() if value is not None else None
+
+
+def _iso_or_none(value: Optional[datetime]) -> Optional[str]:
+    return value.isoformat() if value is not None else None
+
+
+def _datetime_or_none(value: Optional[str]) -> Optional[datetime]:
+    return _normalize_datetime(datetime.fromisoformat(value)) if value is not None else None
 
 
 def _insert_event_in_order(events: List[SensorEvent], event: SensorEvent) -> None:
@@ -634,6 +721,74 @@ class CompiledEngine:
 
         self._watermark = timestamp
         return emitted
+
+    def snapshot(self) -> EngineSnapshot:
+        """Capture watermark, per-entity rule state, and late-event counters."""
+        return EngineSnapshot(
+            watermark=_iso_or_none(self._watermark),
+            entities={
+                entity_id: {
+                    rule_id: _serialize_rule_state(state) for rule_id, state in states.items()
+                }
+                for entity_id, states in self._entities.items()
+            },
+            rule_fingerprints={rule.rule_id: rule.state_fingerprint() for rule in self.rules},
+            late_event_metrics=self._late_event_metrics.to_dict(),
+        )
+
+    @classmethod
+    def restore(
+        cls,
+        snapshot: EngineSnapshot,
+        rules: Iterable[CompiledRule],
+        config: Optional[EngineConfig] = None,
+        sink_registry: Optional[SinkRegistry] = None,
+    ) -> "CompiledEngine":
+        """Rebuild an engine from a snapshot.
+
+        Rules present in both the snapshot and ``rules`` must have matching
+        state fingerprints. Rules only in the snapshot are dropped (the rule was
+        removed) and rules only in ``rules`` start empty (the rule was added).
+        The snapshot watermark takes precedence over
+        ``EngineConfig.initial_watermark``.
+        """
+        engine = cls(rules, config=config, sink_registry=sink_registry)
+        engine._apply_snapshot(snapshot)
+        return engine
+
+    def _apply_snapshot(self, snapshot: EngineSnapshot) -> None:
+        for rule in self.rules:
+            recorded = snapshot.rule_fingerprints.get(rule.rule_id)
+            if recorded is None:
+                continue
+            current = rule.state_fingerprint()
+            if recorded != current:
+                raise ValueError(
+                    f"Rule {rule.rule_id!r} has changed shape since the snapshot was taken "
+                    f"(fingerprint {recorded} -> {current}). Its windows, timers or sources "
+                    "differ, so the retained state no longer means the same thing. Restore "
+                    "against the original rule, or start a fresh engine for the new one."
+                )
+
+        self._watermark = _datetime_or_none(snapshot.watermark)
+        self._entities = {}
+        known_rule_ids = {rule.rule_id for rule in self.rules}
+        for entity_id, states in snapshot.entities.items():
+            self._register_entity(entity_id)
+            for rule_id, payload in states.items():
+                if rule_id not in known_rule_ids:
+                    continue
+                self._entities[entity_id][rule_id] = _deserialize_rule_state(payload)
+
+        metrics = snapshot.late_event_metrics
+        self._late_event_metrics = LateEventMetrics(
+            total=metrics.get("total", 0),
+            accepted=metrics.get("accepted", 0),
+            dropped=metrics.get("dropped", 0),
+            rejected=metrics.get("rejected", 0),
+            per_rule_accepted=dict(metrics.get("per_rule_accepted", {})),
+            per_rule_dropped=dict(metrics.get("per_rule_dropped", {})),
+        )
 
     def late_event_metrics(self) -> LateEventMetrics:
         """Counts of events seen behind the watermark since the engine was built."""

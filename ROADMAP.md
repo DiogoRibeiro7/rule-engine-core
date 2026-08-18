@@ -30,7 +30,7 @@ expressiveness before tooling that explains it.
 ```text
 correctness fixes                 [done]
   → late-event semantics          [partial]
-    → checkpoint / recovery
+    → checkpoint / recovery        [done]
       → suppression + alert lifecycle
         → rule versioning + hot reload
           → temporal sequences
@@ -103,27 +103,35 @@ watermarks are tracked per entity.
 
 ---
 
-### Stage 2 — Checkpoint and recovery
+### Stage 2 — Checkpoint and recovery — complete
 
 **Goal.** Let a long-running embedder stop and resume without losing state.
-More valuable to a serious rule engine than any additional adapter.
 
-**Shape.** Serialize and restore the full state tuple:
+**Delivered.**
 
-$$(\text{watermark},\ \text{windows},\ \text{timers},\ \text{entity state},\ \text{dedupe state})$$
+- `CompiledEngine.snapshot()` returns a typed `EngineSnapshot` capturing the
+  watermark, per-entity rule state, pending timers, in-flight window buffers,
+  and late-event counters. It is JSON-serializable and version-stamped, and an
+  unknown version is refused on read.
+- `CompiledEngine.restore(snapshot, rules, ...)` rebuilds an engine. The
+  snapshot watermark takes precedence over `EngineConfig.initial_watermark`.
+- `CompiledRule.state_fingerprint()`, a hash of the fields that give retained
+  state its meaning — trigger type, entity filter, sources, window duration and
+  slide, timeouts, cron, lookback. Restoring into a rule whose fingerprint
+  changed raises. Message templates, severities, sinks, and condition operands
+  are excluded, so cosmetic edits do not invalidate a checkpoint.
+- Rules only in the snapshot are dropped and rules only in the new set start
+  empty, so rules can be added and removed between checkpoints.
 
-```python
-snapshot = engine.snapshot()
-engine = CompiledEngine.restore(snapshot, rules=[...])
-```
+This fingerprint is the same structural comparison Stage 4 needs to decide
+whether a reloaded rule can preserve its state, so that work now has its
+foundation.
 
-Snapshots should be versioned and JSON-serializable, consistent with the typed
-export helpers already present on delivery reports and metrics.
-
-**Done when.** A recovery test splits an event stream at an arbitrary point,
-snapshots, restores into a fresh engine, replays the remainder, and asserts the
-output is identical to an uninterrupted replay — including pending timers and
-in-flight windows.
+**Verified.** Parameterised recovery tests split an event stream at every
+boundary, serialize the snapshot through JSON, restore into a fresh engine, and
+assert the emitted alerts are identical to an uninterrupted replay — covering
+event rules, pending absence timers, in-flight windows, and multiple rules
+across multiple entities.
 
 ---
 
