@@ -1,9 +1,6 @@
 # Rule Engine Core
 
-<!-- Uncomment once the first release has been archived on Zenodo; the badge
-     endpoint 404s until a deposit exists, and renders broken until then.
-[![DOI](https://zenodo.org/badge/1273241661.svg)](https://zenodo.org/badge/latestdoi/1273241661)
--->
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22001698.svg)](https://doi.org/10.5281/zenodo.22001698)
 
 A declarative rule engine for event streams — write conditions in YAML, evaluate
 them deterministically over timestamped events, and deliver the resulting alerts

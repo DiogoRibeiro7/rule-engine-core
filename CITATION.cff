@@ -39,5 +39,9 @@ keywords:
   - observability
   - Python
 date-released: 2026-08-18
-# Added once Zenodo has archived this release:
-# doi: 10.5281/zenodo.XXXXXXX
+# Concept DOI: always resolves to the most recent archived release.
+doi: 10.5281/zenodo.22001698
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.22001699
+    description: Version 0.1.0

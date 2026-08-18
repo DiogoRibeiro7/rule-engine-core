@@ -84,10 +84,12 @@ For each release:
 5. After Zenodo archives the release, add the version-specific DOI to
    `CITATION.cff` as `doi:`.
 
-The DOI badge in `README.md` is commented out until the first release is
-archived, because the badge endpoint 404s until a deposit exists. Uncomment it
-after the first archived release. It uses the concept DOI, which always
-resolves to the latest release, so it needs no further updating.
+The DOI badge in `README.md` uses the concept DOI, which always resolves to the
+most recent archived release, so it needs no updating per release. Add each new
+version-specific DOI to the `identifiers` list in `CITATION.cff`.
+
+Zenodo ignores the `subjects` field supplied via `.zenodo.json`; subject terms
+have to be added on the Zenodo record itself if they are wanted.
 
 Edits to `.zenodo.json` only affect future deposits. Metadata on an existing
 Zenodo record has to be corrected on Zenodo itself.
