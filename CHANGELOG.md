@@ -59,6 +59,10 @@ Suggested `Upgrade Notes` format:
 - Repository naming and public docs are now generic and no longer tied to a
   domain-specific engine name.
 - README and roadmap now track repo truth instead of aspirational features.
+- `ROADMAP.md` is now a sequenced depth plan (late events, checkpointing,
+  alert lifecycle, rule versioning, temporal sequences, explainability,
+  backtesting, partitioning) rather than an integration backlog, with an
+  explicit list of deferred non-goals.
 - README is now restructured around what the runtime is and how it works,
   with a worked example, trigger/sink reference tables, and incremental
   "now supports" notes moved here instead.
