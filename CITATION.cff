@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: If you use this software, please cite it using these metadata.
 title: "Rule Engine Core: a declarative complex event processing runtime with deterministic replay and at-least-once delivery"
 type: software
-version: 0.1.0
+version: 0.2.0
 license: MIT
 repository-code: "https://github.com/DiogoRibeiro7/rule-engine-core"
 url: "https://github.com/DiogoRibeiro7/rule-engine-core"

@@ -29,7 +29,9 @@ Suggested `Upgrade Notes` format:
   Existing configs remain valid.
 ```
 
-## Unreleased
+## 0.2.0 - 2026-08-18
+
+Event-time correctness and state recovery.
 
 ### Added
 
