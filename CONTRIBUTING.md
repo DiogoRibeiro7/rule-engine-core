@@ -66,6 +66,32 @@ or extend the golden fixtures under `tests/fixtures/replay/`.
 - Keep public naming generic. Avoid domain-specific terms in repo-facing code
   and docs.
 
+## Releases And Archiving
+
+Tagged releases are archived on Zenodo, which mints a DOI per release. The
+GitHub-to-Zenodo webhook must be enabled once for this repository, under the
+Zenodo GitHub settings page, before the first release is archived. Only
+releases created *after* the webhook is enabled are picked up.
+
+For each release:
+
+1. Bump `version` in `pyproject.toml`, `.zenodo.json`, and `CITATION.cff`
+   so all three agree.
+2. Set `date-released` in `CITATION.cff` to the release date.
+3. Move the `Unreleased` section of `CHANGELOG.md` under the new version
+   heading, keeping any `Upgrade Notes`.
+4. Run the full local check stack, then tag and publish a GitHub release.
+5. After Zenodo archives the release, add the version-specific DOI to
+   `CITATION.cff` as `doi:`.
+
+The DOI badge in `README.md` is commented out until the first release is
+archived, because the badge endpoint 404s until a deposit exists. Uncomment it
+after the first archived release. It uses the concept DOI, which always
+resolves to the latest release, so it needs no further updating.
+
+Edits to `.zenodo.json` only affect future deposits. Metadata on an existing
+Zenodo record has to be corrected on Zenodo itself.
+
 ## Pull Requests
 
 A good change set includes:

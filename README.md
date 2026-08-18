@@ -1,5 +1,10 @@
 # Rule Engine Core
 
+<!-- Uncomment once the first release has been archived on Zenodo; the badge
+     endpoint 404s until a deposit exists, and renders broken until then.
+[![DOI](https://zenodo.org/badge/1273241661.svg)](https://zenodo.org/badge/latestdoi/1273241661)
+-->
+
 A declarative rule engine for event streams — write conditions in YAML, evaluate
 them deterministically over timestamped events, and deliver the resulting alerts
 through reliable sink adapters.
@@ -246,11 +251,23 @@ Requires Python 3.11+. The only runtime dependency is PyYAML.
 | `docs/embedding-examples.md` | Python embedding patterns |
 | `docs/examples.md` | Multi-domain example scenarios |
 | `docs/scope-boundary.md` | Scope decisions and out-of-scope lines |
-| `CONTRIBUTING.md` | Contributor workflow |
+| `CONTRIBUTING.md` | Contributor workflow and release steps |
+| `CITATION.cff` | Machine-readable citation metadata |
+| `.zenodo.json` | Zenodo deposit metadata for archived releases |
 | `CHANGELOG.md` | User-visible history |
 | `ROADMAP.md` | Post-core backlog |
 
 Licensed under MIT.
+
+## Citation
+
+Each tagged GitHub release is archived on Zenodo and assigned a DOI. Cite the
+concept DOI, which always resolves to the most recent release, or the
+version-specific DOI shown on the Zenodo record for the release you used.
+
+`CITATION.cff` carries machine-readable citation metadata and drives the
+"Cite this repository" control on GitHub. `.zenodo.json` supplies the deposit
+metadata Zenodo reads when it archives a release.
 
 ## Maintenance rule
 

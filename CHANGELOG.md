@@ -50,6 +50,9 @@ Suggested `Upgrade Notes` format:
 - Neutral multi-domain examples with checked-in sample rules and event data.
 - Top-level contribution notes and changelog policy.
 - A reusable changelog upgrade-note pattern for future releases.
+- `.zenodo.json` and `CITATION.cff` so tagged releases archive to Zenodo with
+  a DOI and machine-readable citation metadata.
+- Release and archiving steps in `CONTRIBUTING.md`.
 
 ### Changed
 

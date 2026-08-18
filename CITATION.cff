@@ -1,0 +1,43 @@
+cff-version: 1.2.0
+message: If you use this software, please cite it using these metadata.
+title: "Rule Engine Core: a declarative complex event processing runtime with deterministic replay and at-least-once delivery"
+type: software
+version: 0.1.0
+license: MIT
+repository-code: "https://github.com/DiogoRibeiro7/rule-engine-core"
+url: "https://github.com/DiogoRibeiro7/rule-engine-core"
+authors:
+  - family-names: Ribeiro
+    given-names: Diogo
+    orcid: "https://orcid.org/0009-0001-2022-7072"
+    email: dfr@esmad.ipp.pt
+    affiliation: "ESMAD - School of Media Arts and Design, Polytechnic of Porto"
+abstract: >-
+  Rule Engine Core is a small, embeddable complex event processing (CEP)
+  runtime written in Python. Rules are written declaratively in YAML,
+  validated against a formal schema at load time, compiled into executable
+  runtime objects, and evaluated deterministically over timestamped,
+  entity-keyed event streams. It supports event, window, absence, composite,
+  and scheduled triggers, and dispatches emitted alerts through a sink layer
+  providing at-least-once delivery with a versioned envelope, deterministic
+  idempotency keys, bounded retries, dead-letter recording, and delivery
+  metrics.
+keywords:
+  - complex event processing
+  - CEP
+  - rule engine
+  - declarative rules
+  - event stream processing
+  - event-time semantics
+  - watermark
+  - deterministic replay
+  - temporal reasoning
+  - alerting
+  - at-least-once delivery
+  - idempotency
+  - dead-letter queue
+  - observability
+  - Python
+# Set at release time, alongside the tag and the Zenodo DOI:
+# date-released: YYYY-MM-DD
+# doi: 10.5281/zenodo.XXXXXXX
