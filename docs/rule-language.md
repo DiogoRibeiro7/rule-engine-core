@@ -10,7 +10,8 @@ A rule document must be a YAML object with:
 
 - required: `rule_id`, `actions`
 - exactly one of: `source` or `sources`
-- optional: `description`, `trigger`, `condition`, `aggregations`, `allowed_lateness`
+- optional: `description`, `trigger`, `condition`, `aggregations`, `allowed_lateness`,
+  `emit`
 
 Top-level unknown fields are rejected.
 
@@ -128,6 +129,48 @@ Rejected fields:
 - `duration`
 - `slide`
 - `timeout`
+
+## Alert Lifecycle
+
+The optional `emit` block turns a rule from fire-on-every-match into one that
+tracks alert *episodes*.
+
+```yaml
+emit:
+  cooldown: 30m
+  repeat_every: 2h
+  resolve: true
+```
+
+Supported fields, all optional:
+
+- `cooldown`: minimum gap between emissions within an episode. Emissions inside
+  the gap are suppressed.
+- `repeat_every`: re-emit on this interval while the episode is open. This is
+  timer-driven, so a reminder fires even when no new events arrive.
+- `resolve`: emit a closing alert when the condition clears. Defaults to `false`.
+
+An episode opens on the first qualifying emission and closes when the condition
+clears. Emissions are labelled `firing`, `repeat`, or `resolved`, and all
+emissions in one episode share a `correlation_id`. Both fields appear in the
+delivered payload; see `docs/delivery-contract.md`.
+
+If both `cooldown` and `repeat_every` are set, the next emission is allowed once
+the larger of the two has elapsed.
+
+A rule with no `emit` block keeps the original behaviour: every qualifying
+evaluation emits, with no episode tracking and no suppression.
+
+Emission policy is not part of the snapshot state fingerprint, so retuning a
+cooldown or a repeat interval does not invalidate an existing checkpoint. A
+pending reminder scheduled under the old interval fires at its already-scheduled
+time and follows the new interval afterwards.
+
+### Not Supported
+
+There is no acknowledgement state. Acknowledging an alert requires an
+operator-facing inbound API, which is outside this repo's scope boundary; that
+belongs in the alerting system consuming these payloads.
 
 ## Late Events
 
@@ -384,6 +427,7 @@ Not supported by the current repo surface:
 - workflow orchestration or stateful infrastructure integrations
 - recomputing windows that have already closed when a late event arrives
 - per-source or per-entity watermarks; the watermark is engine-wide
+- alert acknowledgement, which would need an inbound operator API
 
 ## Source Of Truth
 

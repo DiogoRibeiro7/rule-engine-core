@@ -29,6 +29,36 @@ Suggested `Upgrade Notes` format:
   Existing configs remain valid.
 ```
 
+## Unreleased
+
+### Added
+
+- An optional per-rule `emit` block with `cooldown`, `repeat_every`, and
+  `resolve`, turning a rule from fire-on-every-match into one that tracks alert
+  episodes. `repeat_every` is timer-driven, so a reminder fires with no new
+  events.
+- Delivered payloads now carry `lifecycle` (`firing`, `repeat`, or `resolved`)
+  and `correlation_id`, which is stable across one episode so a resolution can
+  be joined back to the alert that opened it.
+- Episode state is covered by engine snapshots, so a cooldown still suppresses
+  and a pending reminder still fires after a restart.
+
+### Changed
+
+- Alert metadata gained `lifecycle` and `correlation_id`, which also appear in
+  the delivered payload. The golden replay fixture was regenerated accordingly.
+
+### Upgrade Notes
+
+- Rules with no `emit` block are unaffected: every qualifying evaluation still
+  emits, with no episode tracking or suppression.
+- Consumers parsing delivered payloads will see two new fields. A rule without
+  an `emit` block always reports `lifecycle: firing`, and its `correlation_id`
+  is stable per entity rather than per episode, so episode correlation requires
+  declaring `emit`.
+- Alert acknowledgement is explicitly not supported; it needs an inbound
+  operator API that is outside this repo's scope.
+
 ## 0.2.0 - 2026-08-18
 
 Event-time correctness and state recovery.

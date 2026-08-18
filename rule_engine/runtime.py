@@ -103,6 +103,18 @@ class CompiledRule:
     cron: Optional[str] = None
     lookback: Optional[timedelta] = None
     allowed_lateness: timedelta = timedelta(0)
+    cooldown: Optional[timedelta] = None
+    repeat_every: Optional[timedelta] = None
+    resolve: bool = False
+
+    @property
+    def has_lifecycle(self) -> bool:
+        """Whether this rule tracks alert episodes.
+
+        Rules without an emit block keep the original behaviour of emitting
+        on every qualifying evaluation, with no episode state at all.
+        """
+        return self.cooldown is not None or self.repeat_every is not None or self.resolve
 
     @classmethod
     def from_declarative(cls, rule: DeclarativeRule) -> "CompiledRule":
@@ -181,6 +193,11 @@ class CompiledRule:
         if trigger_type == "scheduled" and not rule.trigger.cron:
             raise ValueError(f"Scheduled rule {rule.rule_id} requires trigger.cron")
 
+        emit = rule.emit
+        cooldown = parse_duration(emit.cooldown) if emit else None
+        repeat_every = parse_duration(emit.repeat_every) if emit else None
+        resolve = emit.resolve if emit else False
+
         allowed_lateness = parse_duration(rule.allowed_lateness, allow_zero=True) or timedelta(0)
         if allowed_lateness < timedelta(0):
             raise ValueError(f"Rule {rule.rule_id} requires a non-negative allowed_lateness")
@@ -202,6 +219,9 @@ class CompiledRule:
             cron=rule.trigger.cron,
             lookback=lookback,
             allowed_lateness=allowed_lateness,
+            cooldown=cooldown,
+            repeat_every=repeat_every,
+            resolve=resolve,
         )
 
     def state_fingerprint(self) -> str:
@@ -261,6 +281,9 @@ class RuleState:
     next_window_end: Optional[datetime] = None
     next_schedule_fire: Optional[datetime] = None
     last_schedule_fire: Optional[datetime] = None
+    episode_started: Optional[datetime] = None
+    last_emit: Optional[datetime] = None
+    next_repeat_fire: Optional[datetime] = None
 
 
 def _flatten_context(data: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
@@ -305,6 +328,9 @@ def _serialize_rule_state(state: "RuleState") -> Dict[str, Any]:
         "next_window_end": _iso_or_none(state.next_window_end),
         "next_schedule_fire": _iso_or_none(state.next_schedule_fire),
         "last_schedule_fire": _iso_or_none(state.last_schedule_fire),
+        "episode_started": _iso_or_none(state.episode_started),
+        "last_emit": _iso_or_none(state.last_emit),
+        "next_repeat_fire": _iso_or_none(state.next_repeat_fire),
     }
 
 
@@ -329,6 +355,9 @@ def _deserialize_rule_state(payload: Dict[str, Any]) -> "RuleState":
         next_window_end=_datetime_or_none(payload.get("next_window_end")),
         next_schedule_fire=_datetime_or_none(payload.get("next_schedule_fire")),
         last_schedule_fire=_datetime_or_none(payload.get("last_schedule_fire")),
+        episode_started=_datetime_or_none(payload.get("episode_started")),
+        last_emit=_datetime_or_none(payload.get("last_emit")),
+        next_repeat_fire=_datetime_or_none(payload.get("next_repeat_fire")),
     )
 
 
@@ -714,10 +743,15 @@ class CompiledEngine:
                 if rule.trigger_type == "event":
                     emitted.extend(self._evaluate_event_rule(rule, event))
                 elif rule.trigger_type == "absence":
+                    # The source is reporting again, so any open episode is over.
                     state.absence_fired = False
+                    emitted.extend(self._resolve_episode(rule, event.entity_id, timestamp))
                 elif rule.trigger_type == "composite":
                     state.source_absent[event.sensor_type] = False
+                    was_active = state.composite_active
                     state.composite_active = self._composite_condition_active(rule, state)
+                    if was_active and not state.composite_active:
+                        emitted.extend(self._resolve_episode(rule, event.entity_id, timestamp))
 
         self._watermark = timestamp
         return emitted
@@ -929,6 +963,8 @@ class CompiledEngine:
                 elif rule.trigger_type == "scheduled":
                     if state.next_schedule_fire is not None:
                         due_times.append(state.next_schedule_fire)
+                if state.next_repeat_fire is not None and state.episode_started is not None:
+                    due_times.append(state.next_repeat_fire)
         return min(due_times, default=None)
 
     def _fire_due_timers(self, fire_time: datetime) -> List[EmittedAlert]:
@@ -936,6 +972,34 @@ class CompiledEngine:
         for entity_id, entity_states in self._entities.items():
             for rule_id, state in entity_states.items():
                 rule = self._rule_map[rule_id]
+                if (
+                    state.episode_started is not None
+                    and state.next_repeat_fire is not None
+                    and state.next_repeat_fire <= fire_time
+                    and rule.repeat_every is not None
+                ):
+                    # A reminder for an episode that is still open. The episode
+                    # is unchanged, so the correlation id stays the same.
+                    state.last_emit = fire_time
+                    state.next_repeat_fire = fire_time + rule.repeat_every
+                    context = RuleContext(
+                        entity_id=entity_id,
+                        rule_id=rule.rule_id,
+                        timestamp=fire_time,
+                        duration=fire_time - state.episode_started,
+                    )
+                    emitted.extend(
+                        self._build_alerts(
+                            rule,
+                            context,
+                            {
+                                "entity_id": entity_id,
+                                "rule_id": rule.rule_id,
+                                "episode_duration": str(fire_time - state.episode_started),
+                            },
+                            lifecycle="repeat",
+                        )
+                    )
                 if rule.trigger_type == "absence":
                     last_seen = state.last_seen.get(rule.sensor_types[0])
                     if (
@@ -982,13 +1046,16 @@ class CompiledEngine:
             "rule_id": rule.rule_id,
         }
         if not _evaluate_operands(rule.condition_operator, rule.operands, values):
+            return self._resolve_episode(rule, event.entity_id, event.timestamp)
+        label = self._lifecycle_label(rule, event.entity_id, event.timestamp)
+        if label is None:
             return []
         context = RuleContext(
             entity_id=event.entity_id,
             rule_id=rule.rule_id,
             timestamp=event.timestamp,
         )
-        return self._build_alerts(rule, context, values)
+        return self._build_alerts(rule, context, values, lifecycle=label)
 
     def _emit_absence(
         self, rule: CompiledRule, entity_id: str, state: RuleState, fire_time: datetime
@@ -1004,13 +1071,16 @@ class CompiledEngine:
             "duration": str(duration),
             "last_seen_ts": last_seen.isoformat() if last_seen is not None else None,
         }
+        label = self._lifecycle_label(rule, entity_id, fire_time)
+        if label is None:
+            return []
         context = RuleContext(
             entity_id=entity_id,
             rule_id=rule.rule_id,
             timestamp=fire_time,
             duration=duration,
         )
-        return self._build_alerts(rule, context, values)
+        return self._build_alerts(rule, context, values, lifecycle=label)
 
     def _emit_composite(
         self, rule: CompiledRule, entity_id: str, state: RuleState, fire_time: datetime
@@ -1028,12 +1098,15 @@ class CompiledEngine:
                 "duration": str(duration) if duration is not None else None,
                 "absent": state.source_absent.get(sensor_type, False),
             }
+        label = self._lifecycle_label(rule, entity_id, fire_time)
+        if label is None:
+            return []
         context = RuleContext(
             entity_id=entity_id,
             rule_id=rule.rule_id,
             timestamp=fire_time,
         )
-        return self._build_alerts(rule, context, values)
+        return self._build_alerts(rule, context, values, lifecycle=label)
 
     def _emit_window(
         self, rule: CompiledRule, entity_id: str, state: RuleState, fire_time: datetime
@@ -1048,6 +1121,9 @@ class CompiledEngine:
         window = EntityWindow(entity_id=entity_id, start=start, end=fire_time, events=events)
         values = self._window_values(rule, window)
         if not _evaluate_operands(rule.condition_operator, rule.operands, values):
+            return self._resolve_episode(rule, entity_id, fire_time)
+        label = self._lifecycle_label(rule, entity_id, fire_time)
+        if label is None:
             return []
         context = RuleContext(
             entity_id=entity_id,
@@ -1055,7 +1131,7 @@ class CompiledEngine:
             timestamp=fire_time,
             duration=duration,
         )
-        return self._build_alerts(rule, context, values)
+        return self._build_alerts(rule, context, values, lifecycle=label)
 
     def _emit_scheduled(
         self, rule: CompiledRule, entity_id: str, state: RuleState, fire_time: datetime
@@ -1075,6 +1151,9 @@ class CompiledEngine:
         window = EntityWindow(entity_id=entity_id, start=start, end=fire_time, events=events)
         values = self._window_values(rule, window)
         if not _evaluate_operands(rule.condition_operator, rule.operands, values):
+            return self._resolve_episode(rule, entity_id, fire_time)
+        label = self._lifecycle_label(rule, entity_id, fire_time)
+        if label is None:
             return []
         context = RuleContext(
             entity_id=entity_id,
@@ -1082,7 +1161,7 @@ class CompiledEngine:
             timestamp=fire_time,
             duration=fire_time - start,
         )
-        return self._build_alerts(rule, context, values)
+        return self._build_alerts(rule, context, values, lifecycle=label)
 
     def _window_values(self, rule: CompiledRule, window: EntityWindow) -> Dict[str, Any]:
         outputs: Dict[str, Any] = {}
@@ -1097,8 +1176,92 @@ class CompiledEngine:
             **outputs,
         }
 
+    def _correlation_id(self, rule: CompiledRule, entity_id: str) -> str:
+        """Stable identifier for one alert episode.
+
+        Repeats and the closing resolution share the firing alert's id, so a
+        downstream consumer can correlate them. Rules without an emit block have
+        no episodes, so each emission stands alone and is keyed by rule and
+        entity only.
+        """
+        seed = f"{rule.rule_id}|{entity_id}"
+        if rule.has_lifecycle:
+            state = self._entities.get(entity_id, {}).get(rule.rule_id)
+            started = state.episode_started if state is not None else None
+            if started is not None:
+                seed = f"{seed}|{started.isoformat()}"
+        return sha256(seed.encode("utf-8")).hexdigest()[:16]
+
+    def _lifecycle_label(
+        self, rule: CompiledRule, entity_id: str, now: datetime
+    ) -> Optional[str]:
+        """Decide how this emission is labelled, or None to suppress it.
+
+        Rules with no emit block bypass episode tracking entirely and always
+        emit, preserving the original behaviour.
+        """
+        if not rule.has_lifecycle:
+            return "firing"
+
+        state = self._entities[entity_id][rule.rule_id]
+        if state.episode_started is None:
+            state.episode_started = now
+            state.last_emit = now
+            if rule.repeat_every is not None:
+                state.next_repeat_fire = now + rule.repeat_every
+            return "firing"
+
+        gap = max(
+            rule.cooldown or timedelta(0),
+            rule.repeat_every or timedelta(0),
+        )
+        last_emit = state.last_emit or state.episode_started
+        if gap > timedelta(0) and now - last_emit < gap:
+            return None
+
+        state.last_emit = now
+        if rule.repeat_every is not None:
+            state.next_repeat_fire = now + rule.repeat_every
+        return "repeat"
+
+    def _resolve_episode(
+        self, rule: CompiledRule, entity_id: str, now: datetime
+    ) -> List[EmittedAlert]:
+        """Close an open episode and emit a resolution, if the rule asks for one."""
+        if not rule.resolve:
+            return []
+        state = self._entities[entity_id][rule.rule_id]
+        if state.episode_started is None:
+            return []
+
+        started = state.episode_started
+        context = RuleContext(
+            entity_id=entity_id,
+            rule_id=rule.rule_id,
+            timestamp=now,
+            duration=now - started,
+        )
+        variables = {
+            "entity_id": entity_id,
+            "rule_id": rule.rule_id,
+            "episode_duration": str(now - started),
+        }
+        alerts = self._build_alerts(rule, context, variables, lifecycle="resolved")
+        self._close_episode(state)
+        return alerts
+
+    @staticmethod
+    def _close_episode(state: "RuleState") -> None:
+        state.episode_started = None
+        state.last_emit = None
+        state.next_repeat_fire = None
+
     def _build_alerts(
-        self, rule: CompiledRule, context: RuleContext, variables: Dict[str, Any]
+        self,
+        rule: CompiledRule,
+        context: RuleContext,
+        variables: Dict[str, Any],
+        lifecycle: str = "firing",
     ) -> List[EmittedAlert]:
         emitted: List[EmittedAlert] = []
         merged = {
@@ -1122,6 +1285,8 @@ class CompiledEngine:
                             "entity_id": context.entity_id,
                             "sinks": action.sinks,
                             "variables": merged,
+                            "lifecycle": lifecycle,
+                            "correlation_id": self._correlation_id(rule, context.entity_id),
                         },
                     ),
                 )

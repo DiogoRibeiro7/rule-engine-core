@@ -31,7 +31,7 @@ expressiveness before tooling that explains it.
 correctness fixes                 [done]
   → late-event semantics          [partial]
     → checkpoint / recovery        [done]
-      → suppression + alert lifecycle
+      → suppression + alert lifecycle [done]
         → rule versioning + hot reload
           → temporal sequences
             → explainability
@@ -135,12 +135,12 @@ across multiple entities.
 
 ---
 
-### Stage 3 — Suppression, cooldowns, and alert lifecycle
+### Stage 3 — Suppression, cooldowns, and alert lifecycle — complete
 
 **Goal.** The most valuable missing *operational* capability. A technically
 correct rule engine with no lifecycle model still floods everything downstream.
 
-**Shape.**
+**Delivered.**
 
 ```yaml
 emit:
@@ -149,21 +149,29 @@ emit:
   resolve: true
 ```
 
-Alerts gain an explicit state machine:
+- `cooldown` throttles emissions within an episode; `repeat_every` re-emits on a
+  timer, so a reminder fires even with no new events; `resolve` emits a closing
+  alert when the condition clears.
+- Emissions are labelled `firing`, `repeat`, or `resolved`, and every emission in
+  one episode shares a `correlation_id` derived from the rule, the entity, and
+  the instant the episode opened. Both fields ride in the delivered payload, so
+  a consumer can join a resolution back to the alert that opened it.
+- Episode state is part of the Stage 2 snapshot, so a cooldown still suppresses
+  and a pending reminder still fires after a restart.
+- Emission policy is deliberately excluded from the state fingerprint, so
+  retuning a cooldown does not invalidate an existing checkpoint.
+- Rules with no `emit` block are untouched: every qualifying evaluation emits,
+  with no episode tracking.
 
-```text
-inactive → firing → acknowledged/suppressed → resolved
-```
+**Not implemented: acknowledgement.** The original sketch listed an
+`acknowledged` state. Acknowledging an alert requires an inbound operator API,
+which contradicts the repo's own boundary against being a rule-management
+product. That state belongs in the alerting system consuming these payloads, and
+`docs/rule-language.md` says so explicitly rather than leaving it implied.
 
-This changes the delivery contract: sinks currently receive fire-and-forget
-alerts, and will need to carry lifecycle transitions and correlate repeats and
-resolutions to the originating alert. The existing idempotency key is the
-natural correlation handle. `docs/delivery-contract.md` must be updated in the
-same change set.
-
-**Done when.** Cooldown suppresses within the window, `repeat_every` re-emits
-after it, `resolve` emits a resolution when the condition clears, and lifecycle
-state survives the Stage 2 snapshot round-trip.
+**Unblocks.** `recompute` from Stage 1 needed retraction before a late event
+could reopen a closed window. The episode model now provides the correlation
+handle that a retraction would use.
 
 ---
 

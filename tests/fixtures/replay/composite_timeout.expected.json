@@ -31,7 +31,9 @@
               "absent": true
             },
             "duration": "0:00:00"
-          }
+          },
+          "lifecycle": "firing",
+          "correlation_id": "45bd37e617593658"
         }
       },
       "delivery_results": [

@@ -55,6 +55,49 @@ Example envelope:
 }
 ```
 
+## Alert Lifecycle
+
+Every delivered payload carries two lifecycle fields.
+
+`lifecycle` is one of:
+
+| Value | Meaning |
+| --- | --- |
+| `firing` | The first emission of an episode |
+| `repeat` | A re-emission while the episode is still open |
+| `resolved` | The condition cleared and the episode closed |
+
+`correlation_id` is stable for the lifetime of one episode, so a consumer can
+join a `resolved` payload back to the `firing` payload that opened it, and to
+every `repeat` in between. It is derived from the rule, the entity, and the
+instant the episode opened.
+
+```json
+{
+  "rule_id": "reading_spike",
+  "entity_id": "entity-1",
+  "lifecycle": "resolved",
+  "correlation_id": "45bd37e617593658",
+  "sinks": [{"type": "queue", "queue": "alert-events"}],
+  "variables": {"episode_duration": "0:20:00"}
+}
+```
+
+A rule with no `emit` block has no episodes: every emission is labelled
+`firing`, and its `correlation_id` is derived from the rule and entity alone, so
+it is stable per entity rather than per episode. Consumers that need episode
+correlation should treat `emit` as a prerequisite.
+
+Lifecycle is orthogonal to the idempotency key. The idempotency key
+de-duplicates a single delivery attempt; `correlation_id` groups distinct
+deliveries that describe the same ongoing condition. A `firing` and its
+`resolved` share a `correlation_id` and necessarily have different idempotency
+keys.
+
+Ordering is not guaranteed across sinks. A consumer that receives `resolved`
+before the `firing` it closes should treat the episode as closed rather than
+reopening it.
+
 ## Sink Semantics
 
 ### `stdout`

@@ -120,6 +120,22 @@ Aggregations available to `window` rules: `count`, `sum`, `mean`, `min`,
 `max`, `stddev`, `delta`, `rate`, and `percentile`, optionally bucketed by a
 `sub_window`.
 
+### Alert lifecycle
+
+By default a rule emits on every qualifying evaluation. An optional `emit` block
+turns it into one that tracks alert episodes:
+
+```yaml
+emit:
+  cooldown: 30m       # throttle emissions within an episode
+  repeat_every: 2h    # remind while it is still firing, timer-driven
+  resolve: true       # emit a closing alert when the condition clears
+```
+
+Emissions are labelled `firing`, `repeat`, or `resolved`, and all emissions in
+one episode share a `correlation_id`, so a consumer can join a resolution back
+to the alert that opened it. Episode state is included in snapshots.
+
 ### Sinks
 
 | Type | Notes |

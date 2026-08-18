@@ -50,6 +50,15 @@ _DECLARATIVE_RULE_SCHEMA: Dict[str, Any] = {
         "rule_id": {"type": "string"},
         "description": {"type": "string"},
         "allowed_lateness": {"type": "string"},
+        "emit": {
+            "type": "object",
+            "properties": {
+                "cooldown": {"type": "string"},
+                "repeat_every": {"type": "string"},
+                "resolve": {"type": "boolean"},
+            },
+            "additionalProperties": False,
+        },
         "trigger": {
             "type": "object",
             "properties": {
@@ -165,6 +174,13 @@ class Trigger:
 
 
 @dataclass
+class Emit:
+    cooldown: Optional[str] = None
+    repeat_every: Optional[str] = None
+    resolve: bool = False
+
+
+@dataclass
 class Source:
     sensor_type: str
     entity_id: str
@@ -196,6 +212,7 @@ class DeclarativeRule:
     actions: List[Action]
     aggregations: List[Dict[str, Any]] = field(default_factory=list)
     allowed_lateness: Optional[str] = None
+    emit: Optional[Emit] = None
 
     @property
     def functional_primitive(self) -> str:
@@ -455,6 +472,17 @@ def load_rule_yaml(text: str) -> DeclarativeRule:
         actions=_load_actions(document["rule_id"], document.get("actions", [])),
         aggregations=document.get("aggregations", []),
         allowed_lateness=document.get("allowed_lateness"),
+        emit=_load_emit(document.get("emit")),
+    )
+
+
+def _load_emit(data: Optional[Dict[str, Any]]) -> Optional[Emit]:
+    if data is None:
+        return None
+    return Emit(
+        cooldown=data.get("cooldown"),
+        repeat_every=data.get("repeat_every"),
+        resolve=data.get("resolve", False),
     )
 
 
