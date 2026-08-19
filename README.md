@@ -234,6 +234,23 @@ alert episode until it resolves. Passing `activate_at` stages the swap until the
 watermark reaches that instant. The returned report says what happened to each
 rule.
 
+### Backtesting
+
+Deterministic replay makes rule changes measurable before they ship:
+
+```python
+report = engine.simulate(events, from_time=start, to_time=end)
+comparison = CompiledEngine.compare(events, current_rules, proposed_rules)
+
+comparison.only_candidate   # alerts the change would introduce
+comparison.rule_deltas()    # per rule: change in alerts and suppressions
+```
+
+`simulate()` runs in a clean engine, so it neither touches the live one nor
+depends on state it happens to be carrying, and reports per-rule evaluations,
+fires, repeats, resolutions, suppressions, entities affected, and episode
+durations.
+
 ### Explainability
 
 Declarative logic is hard to debug because the logic is data. `explain()` reports

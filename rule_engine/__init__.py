@@ -28,6 +28,9 @@ from .models import (
     RuleExplanation,
     RuleMetadata,
     RuleReloadOutcome,
+    RuleSimulationStats,
+    SimulationComparison,
+    SimulationReport,
 )
 from .runtime import CompiledEngine
 from .sinks import (
@@ -90,6 +93,9 @@ __all__ = [
     "LateEventMetrics",
     "ReloadReport",
     "RuleReloadOutcome",
+    "RuleSimulationStats",
+    "SimulationComparison",
+    "SimulationReport",
     "EntityWindow",
     "FileDeadLetterStore",
     "FileSink",

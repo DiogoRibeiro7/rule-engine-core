@@ -35,7 +35,7 @@ correctness fixes                 [done]
         → rule versioning + hot reload [done]
           → temporal sequences      [done]
             → explainability        [done]
-              → simulation / backtesting
+              → simulation / backtesting [done]
                 → partitioned execution
 ```
 
@@ -275,27 +275,33 @@ byte-identical afterwards, including for sequence partial matches.
 
 ---
 
-### Stage 7 — Simulation and backtesting
+### Stage 7 — Simulation and backtesting — complete
 
 **Goal.** Build on deterministic replay to make rule changes safe to ship.
 
-**Shape.**
+**Delivered.**
 
 ```python
 report = engine.simulate(events, from_time=..., to_time=...)
+comparison = CompiledEngine.compare(events, baseline_rules, candidate_rules)
 ```
 
-Producing per-rule statistics:
+- Per-rule statistics: evaluations, alerts, fires, repeats, resolutions,
+  suppressions, entities affected, first and last alert, and mean and maximum
+  episode duration. `fire_rate` is alerts per evaluation.
+- Counting suppressions needed a counter the engine did not have, so
+  `suppressed_counts()` was added and is carried through snapshots. It is an
+  operational metric in its own right, not only a simulation input.
+- `compare()` answers "is this rule change safe?" without deploying it: alerts
+  only under one version, alerts shared, and per-rule deltas in alert and
+  suppression volume. Alerts are matched on rule, entity, timestamp, and
+  lifecycle, so an unchanged alert reads as shared rather than as one removed
+  and one added.
 
-$$N_{\text{evaluations}},\quad N_{\text{fires}},\quad N_{\text{suppressed}},\quad N_{\text{resolved}},\quad \text{latency},\quad N_{\text{entities}}$$
-
-Plus A/B comparison of $R_{v1}$ against $R_{v2}$ over the same event stream —
-the strongest feature in this list for anyone changing production rules, and a
-natural consumer of the Stage 4 versioning work.
-
-**Done when.** A comparison report shows which alerts appear only under one
-version, which are shared, and how suppression volume differs — enough to answer
-"is this rule change safe?" without deploying it.
+**Clean-room by construction.** A backtest runs in a fresh engine built from the
+same rules. The live engine is untouched, and the result depends on the stream
+rather than on state the caller happens to be carrying — asserted by a test that
+compares a fresh engine against a used one and requires identical reports.
 
 ---
 

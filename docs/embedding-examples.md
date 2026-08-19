@@ -298,7 +298,50 @@ failure.observed   # 12.0
 The text rendering is one view over the structure, not the primary output.
 `to_dict()` and `to_json()` give the same information for downstream tooling.
 
-## 10. When To Use Which Surface
+## 10. Backtest And Compare Rule Versions
+
+`simulate()` replays a stream against the current rule set and reports what each
+rule did. It runs in a clean engine built from the same rules, so the live
+engine is untouched and the result depends on the stream rather than on whatever
+state the caller happens to be carrying. Sinks are not used; nothing is
+delivered.
+
+```python
+report = engine.simulate(events, from_time=start, to_time=end)
+
+for stats in report.noisiest_rules(5):
+    print(stats.rule_id, stats.alerts, stats.suppressed, stats.entity_count)
+```
+
+Per rule: `evaluations`, `alerts`, `fires`, `repeats`, `resolutions`,
+`suppressed`, `entities`, `first_alert`/`last_alert`, and mean and maximum
+episode duration for episodes that opened and closed inside the window.
+`fire_rate` is alerts per evaluation, or `None` when the rule was never
+evaluated. An *evaluation* is an event the rule could have acted on: its entity
+filter admits the entity and the sensor type is one the rule watches.
+
+### Comparing two versions
+
+```python
+comparison = CompiledEngine.compare(events, baseline_rules, candidate_rules)
+
+comparison.alert_delta        # candidate minus baseline
+comparison.shared             # alerts both versions produce
+comparison.only_baseline      # alerts the change would remove
+comparison.only_candidate     # alerts the change would introduce
+comparison.rule_deltas()      # per rule: change in alerts and suppressions
+```
+
+Alerts are matched on rule, entity, timestamp, and lifecycle, so an alert that
+both versions produce at the same instant counts as shared rather than as one
+removed and one added. This is the question "is this rule change safe?" answered
+without deploying it.
+
+`elapsed_ms` on a report is wall-clock time for the run, useful for sizing a
+backtest. It is the one field that legitimately differs between two otherwise
+identical runs.
+
+## 11. When To Use Which Surface
 
 - Use `build_engine_from_yaml(...)` for the smallest embedding surface.
 - Use `build_engine_from_files(...)` when files are the deployment artifact.

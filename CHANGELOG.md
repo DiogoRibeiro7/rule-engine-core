@@ -50,6 +50,13 @@ Suggested `Upgrade Notes` format:
   is delivered.
 - `ExplainResult.render()` for a text view over the same structure, plus
   `to_dict()`/`to_json()` for tooling.
+- `CompiledEngine.simulate()` backtesting a stream against the current rules in a
+  clean engine, reporting per-rule evaluations, alerts, fires, repeats,
+  resolutions, suppressions, entities affected, and episode durations.
+- `CompiledEngine.compare()` replaying one stream against two rule sets and
+  diffing the alerts, with per-rule deltas in alert and suppression volume.
+- `CompiledEngine.suppressed_counts()` reporting emissions blocked by a cooldown
+  per rule. Engine snapshots carry it; older snapshots load with none.
 
 ### Upgrade Notes
 

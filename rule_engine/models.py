@@ -215,6 +215,131 @@ class ExplainResult:
         return chr(10).join(lines)
 
 
+@dataclass
+class RuleSimulationStats:
+    """What one rule did over a simulated event stream."""
+
+    rule_id: str
+    evaluations: int = 0
+    alerts: int = 0
+    fires: int = 0
+    repeats: int = 0
+    resolutions: int = 0
+    suppressed: int = 0
+    entities: List[str] = field(default_factory=list)
+    first_alert: Optional[str] = None
+    last_alert: Optional[str] = None
+    mean_episode_seconds: Optional[float] = None
+    max_episode_seconds: Optional[float] = None
+
+    @property
+    def entity_count(self) -> int:
+        return len(self.entities)
+
+    @property
+    def fire_rate(self) -> Optional[float]:
+        """Alerts per evaluation, or None when the rule was never evaluated."""
+        if self.evaluations == 0:
+            return None
+        return self.alerts / self.evaluations
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "rule_id": self.rule_id,
+            "evaluations": self.evaluations,
+            "alerts": self.alerts,
+            "fires": self.fires,
+            "repeats": self.repeats,
+            "resolutions": self.resolutions,
+            "suppressed": self.suppressed,
+            "entity_count": self.entity_count,
+            "entities": list(self.entities),
+            "first_alert": self.first_alert,
+            "last_alert": self.last_alert,
+            "mean_episode_seconds": self.mean_episode_seconds,
+            "max_episode_seconds": self.max_episode_seconds,
+            "fire_rate": self.fire_rate,
+        }
+
+
+@dataclass
+class SimulationReport:
+    """Result of replaying a stream against a rule set in a clean engine."""
+
+    event_count: int = 0
+    alert_count: int = 0
+    from_time: Optional[str] = None
+    to_time: Optional[str] = None
+    elapsed_ms: float = 0.0
+    rules: List[RuleSimulationStats] = field(default_factory=list)
+
+    def by_rule(self, rule_id: str) -> Optional[RuleSimulationStats]:
+        for entry in self.rules:
+            if entry.rule_id == rule_id:
+                return entry
+        return None
+
+    def noisiest_rules(self, limit: int = 5) -> List[RuleSimulationStats]:
+        return sorted(self.rules, key=lambda entry: entry.alerts, reverse=True)[:limit]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "event_count": self.event_count,
+            "alert_count": self.alert_count,
+            "from_time": self.from_time,
+            "to_time": self.to_time,
+            "elapsed_ms": self.elapsed_ms,
+            "rules": [entry.to_dict() for entry in self.rules],
+        }
+
+    def to_json(self, indent: Optional[int] = None) -> str:
+        return json.dumps(self.to_dict(), indent=indent)
+
+
+@dataclass
+class SimulationComparison:
+    """Two rule sets replayed over the same stream."""
+
+    baseline: SimulationReport = field(default_factory=SimulationReport)
+    candidate: SimulationReport = field(default_factory=SimulationReport)
+    only_baseline: List[Dict[str, Any]] = field(default_factory=list)
+    only_candidate: List[Dict[str, Any]] = field(default_factory=list)
+    shared: int = 0
+
+    @property
+    def alert_delta(self) -> int:
+        return self.candidate.alert_count - self.baseline.alert_count
+
+    def rule_deltas(self) -> Dict[str, Dict[str, int]]:
+        """Per-rule change in alerts and suppressions, candidate minus baseline."""
+        rule_ids = {entry.rule_id for entry in self.baseline.rules}
+        rule_ids |= {entry.rule_id for entry in self.candidate.rules}
+        deltas: Dict[str, Dict[str, int]] = {}
+        for rule_id in sorted(rule_ids):
+            before = self.baseline.by_rule(rule_id)
+            after = self.candidate.by_rule(rule_id)
+            deltas[rule_id] = {
+                "alerts": (after.alerts if after else 0) - (before.alerts if before else 0),
+                "suppressed": (after.suppressed if after else 0)
+                - (before.suppressed if before else 0),
+            }
+        return deltas
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "alert_delta": self.alert_delta,
+            "shared": self.shared,
+            "only_baseline": list(self.only_baseline),
+            "only_candidate": list(self.only_candidate),
+            "rule_deltas": self.rule_deltas(),
+            "baseline": self.baseline.to_dict(),
+            "candidate": self.candidate.to_dict(),
+        }
+
+    def to_json(self, indent: Optional[int] = None) -> str:
+        return json.dumps(self.to_dict(), indent=indent)
+
+
 RELOAD_POLICIES = ("reset", "preserve", "drain")
 
 
@@ -283,6 +408,7 @@ class EngineSnapshot:
     entities: Dict[str, Dict[str, Dict[str, Any]]] = field(default_factory=dict)
     rule_fingerprints: Dict[str, str] = field(default_factory=dict)
     late_event_metrics: Dict[str, Any] = field(default_factory=dict)
+    suppressed_counts: Dict[str, int] = field(default_factory=dict)
     version: int = SNAPSHOT_VERSION
 
     def to_dict(self) -> Dict[str, Any]:
@@ -292,6 +418,7 @@ class EngineSnapshot:
             "rule_fingerprints": dict(self.rule_fingerprints),
             "entities": deepcopy(self.entities),
             "late_event_metrics": deepcopy(self.late_event_metrics),
+            "suppressed_counts": dict(self.suppressed_counts),
         }
 
     def to_json(self, indent: Optional[int] = None) -> str:
@@ -310,6 +437,7 @@ class EngineSnapshot:
             entities=deepcopy(payload.get("entities", {})),
             rule_fingerprints=dict(payload.get("rule_fingerprints", {})),
             late_event_metrics=deepcopy(payload.get("late_event_metrics", {})),
+            suppressed_counts=dict(payload.get("suppressed_counts", {})),
             version=version,
         )
 

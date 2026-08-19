@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from math import ceil
 from statistics import mean, pstdev
+from time import perf_counter
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from .declarative import Action, DeclarativeRule
@@ -25,6 +26,9 @@ from .models import (
     RuleExplanation,
     RuleMetadata,
     RuleReloadOutcome,
+    RuleSimulationStats,
+    SimulationComparison,
+    SimulationReport,
 )
 from .sinks import (
     DeliveryRequest,
@@ -353,6 +357,118 @@ def _render_template(template: str, variables: Dict[str, Any]) -> str:
         return str(value) if value is not None else match.group(0)
 
     return _TEMPLATE_RE.sub(replacer, template)
+
+
+_ALERT_KEY_FIELDS = ("rule_id", "entity_id", "timestamp", "lifecycle")
+
+
+def _alert_key_dict(key: Tuple[str, str, str, str]) -> Dict[str, Any]:
+    return dict(zip(_ALERT_KEY_FIELDS, key, strict=True))
+
+
+def _alert_key(alert: EmittedAlert) -> Tuple[str, str, str, str]:
+    lifecycle = alert.alert.metadata.get("lifecycle", "firing")
+    return (alert.rule_id, alert.entity_id, alert.timestamp.isoformat(), str(lifecycle))
+
+
+def _replayed_alert_keys(
+    engine: "CompiledEngine",
+    events: List[SensorEvent],
+    from_time: Optional[datetime],
+    to_time: Optional[datetime],
+) -> List[Tuple[str, str, str, str]]:
+    fresh = CompiledEngine(engine.rules, config=engine.config)
+    window = list(events)
+    if from_time is not None:
+        start = _normalize_datetime(from_time)
+        window = [event for event in window if event.timestamp >= start]
+    if to_time is not None:
+        end = _normalize_datetime(to_time)
+        window = [event for event in window if event.timestamp <= end]
+    alerts = fresh.replay(window, until=_normalize_datetime(to_time) if to_time else None)
+    return [_alert_key(alert) for alert in alerts]
+
+
+def _build_simulation_report(
+    rules: List[CompiledRule],
+    events: List[SensorEvent],
+    alerts: List[EmittedAlert],
+    suppressed: Dict[str, int],
+    elapsed_ms: float,
+    from_time: Optional[datetime],
+    to_time: Optional[datetime],
+) -> SimulationReport:
+    stats: Dict[str, RuleSimulationStats] = {
+        rule.rule_id: RuleSimulationStats(rule_id=rule.rule_id) for rule in rules
+    }
+
+    # An evaluation is an event the rule could have acted on: the entity filter
+    # admits it and its sensor type is one the rule watches.
+    for rule in rules:
+        watched = set(rule.sensor_types)
+        stats[rule.rule_id].evaluations = sum(
+            1
+            for event in events
+            if rule.applies_to_entity(event.entity_id) and event.sensor_type in watched
+        )
+        stats[rule.rule_id].suppressed = suppressed.get(rule.rule_id, 0)
+
+    episodes: Dict[str, Dict[str, Any]] = {}
+    entities: Dict[str, List[str]] = {rule_id: [] for rule_id in stats}
+
+    for alert in alerts:
+        entry = stats.get(alert.rule_id)
+        if entry is None:
+            entry = RuleSimulationStats(rule_id=alert.rule_id)
+            stats[alert.rule_id] = entry
+            entities[alert.rule_id] = []
+        entry.alerts += 1
+        lifecycle = alert.alert.metadata.get("lifecycle", "firing")
+        if lifecycle == "firing":
+            entry.fires += 1
+        elif lifecycle == "repeat":
+            entry.repeats += 1
+        elif lifecycle == "resolved":
+            entry.resolutions += 1
+
+        stamp = alert.timestamp.isoformat()
+        if entry.first_alert is None or stamp < entry.first_alert:
+            entry.first_alert = stamp
+        if entry.last_alert is None or stamp > entry.last_alert:
+            entry.last_alert = stamp
+        if alert.entity_id not in entities[alert.rule_id]:
+            entities[alert.rule_id].append(alert.entity_id)
+
+        correlation = alert.alert.metadata.get("correlation_id")
+        if correlation is not None:
+            episode = episodes.setdefault(correlation, {"rule_id": alert.rule_id})
+            if lifecycle == "firing":
+                episode["opened"] = alert.timestamp
+            elif lifecycle == "resolved":
+                episode["closed"] = alert.timestamp
+
+    durations: Dict[str, List[float]] = {}
+    for episode in episodes.values():
+        opened, closed = episode.get("opened"), episode.get("closed")
+        if opened is None or closed is None:
+            continue
+        durations.setdefault(episode["rule_id"], []).append((closed - opened).total_seconds())
+
+    for rule_id, entry in stats.items():
+        entry.entities = sorted(entities.get(rule_id, []))
+        seconds = durations.get(rule_id)
+        if seconds:
+            entry.mean_episode_seconds = sum(seconds) / len(seconds)
+            entry.max_episode_seconds = max(seconds)
+
+    return SimulationReport(
+        event_count=len(events),
+        alert_count=len(alerts),
+        from_time=_normalize_datetime(from_time).isoformat() if from_time else None,
+        to_time=_normalize_datetime(to_time).isoformat() if to_time else None,
+        elapsed_ms=elapsed_ms,
+        rules=[stats[rule_id] for rule_id in sorted(stats)],
+    )
 
 
 _OPERATOR_SYMBOLS = {"eq": "==", "ne": "!=", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
@@ -797,6 +913,7 @@ class CompiledEngine:
             (rule.allowed_lateness for rule in self.rules), default=timedelta(0)
         )
         self._late_event_metrics = LateEventMetrics()
+        self._suppressed_counts: Dict[str, int] = {}
         # rule_id -> the previous definition, kept alive while entities drain
         self._draining_rules: Dict[str, CompiledRule] = {}
         self._draining_entities: Dict[str, Set[str]] = {}
@@ -1054,6 +1171,7 @@ class CompiledEngine:
             },
             rule_fingerprints={rule.rule_id: rule.state_fingerprint() for rule in self.rules},
             late_event_metrics=self._late_event_metrics.to_dict(),
+            suppressed_counts=dict(self._suppressed_counts),
         )
 
     @classmethod
@@ -1100,6 +1218,7 @@ class CompiledEngine:
                     continue
                 self._entities[entity_id][rule_id] = _deserialize_rule_state(payload)
 
+        self._suppressed_counts = dict(snapshot.suppressed_counts)
         metrics = snapshot.late_event_metrics
         self._late_event_metrics = LateEventMetrics(
             total=metrics.get("total", 0),
@@ -1109,6 +1228,10 @@ class CompiledEngine:
             per_rule_accepted=dict(metrics.get("per_rule_accepted", {})),
             per_rule_dropped=dict(metrics.get("per_rule_dropped", {})),
         )
+
+    def suppressed_counts(self) -> Dict[str, int]:
+        """Emissions blocked by a cooldown, per rule, since the engine was built."""
+        return dict(self._suppressed_counts)
 
     def late_event_metrics(self) -> LateEventMetrics:
         """Counts of events seen behind the watermark since the engine was built."""
@@ -1323,6 +1446,79 @@ class CompiledEngine:
                         state.last_schedule_fire = fire_time
                         state.next_schedule_fire = _next_cron_fire(fire_time, rule.cron or "")
         return emitted
+
+    def simulate(
+        self,
+        events: Iterable[SensorEvent],
+        from_time: Optional[datetime] = None,
+        to_time: Optional[datetime] = None,
+    ) -> SimulationReport:
+        """Backtest this rule set over an event stream.
+
+        Runs in a clean engine built from the same rules, so the live engine is
+        untouched and the result depends only on the stream, not on whatever
+        state the caller happens to be carrying. Sinks are not used: nothing is
+        delivered.
+        """
+        ordered = sorted(events, key=lambda event: event.timestamp)
+        if from_time is not None:
+            start = _normalize_datetime(from_time)
+            ordered = [event for event in ordered if event.timestamp >= start]
+        if to_time is not None:
+            end = _normalize_datetime(to_time)
+            ordered = [event for event in ordered if event.timestamp <= end]
+
+        engine = CompiledEngine(self.rules, config=self.config)
+        started = perf_counter()
+        alerts = engine.replay(ordered, until=_normalize_datetime(to_time) if to_time else None)
+        elapsed_ms = (perf_counter() - started) * 1000.0
+
+        return _build_simulation_report(
+            rules=self.rules,
+            events=ordered,
+            alerts=alerts,
+            suppressed=engine.suppressed_counts(),
+            elapsed_ms=elapsed_ms,
+            from_time=from_time,
+            to_time=to_time,
+        )
+
+    @staticmethod
+    def compare(
+        events: Iterable[SensorEvent],
+        baseline_rules: Iterable[CompiledRule],
+        candidate_rules: Iterable[CompiledRule],
+        config: Optional[EngineConfig] = None,
+        from_time: Optional[datetime] = None,
+        to_time: Optional[datetime] = None,
+    ) -> SimulationComparison:
+        """Replay one stream against two rule sets and diff the alerts.
+
+        Answers "is this rule change safe?" without deploying it: which alerts
+        appear only under one version, which are shared, and how the volume of
+        alerts and suppressions moves per rule.
+        """
+        ordered = sorted(events, key=lambda event: event.timestamp)
+        baseline_engine = CompiledEngine(baseline_rules, config=config)
+        candidate_engine = CompiledEngine(candidate_rules, config=config)
+
+        baseline = baseline_engine.simulate(ordered, from_time=from_time, to_time=to_time)
+        candidate = candidate_engine.simulate(ordered, from_time=from_time, to_time=to_time)
+
+        baseline_alerts = _replayed_alert_keys(baseline_engine, ordered, from_time, to_time)
+        candidate_alerts = _replayed_alert_keys(candidate_engine, ordered, from_time, to_time)
+
+        only_baseline = [key for key in baseline_alerts if key not in candidate_alerts]
+        only_candidate = [key for key in candidate_alerts if key not in baseline_alerts]
+        shared = len([key for key in baseline_alerts if key in candidate_alerts])
+
+        return SimulationComparison(
+            baseline=baseline,
+            candidate=candidate,
+            only_baseline=[_alert_key_dict(key) for key in only_baseline],
+            only_candidate=[_alert_key_dict(key) for key in only_candidate],
+            shared=shared,
+        )
 
     def explain(self, event: SensorEvent) -> ExplainResult:
         """Explain what every rule would do with this event.
@@ -1823,6 +2019,9 @@ class CompiledEngine:
         state = self._entities[entity_id][rule.rule_id]
         label, _ = _lifecycle_decision(rule, state, now)
         if label is None:
+            self._suppressed_counts[rule.rule_id] = (
+                self._suppressed_counts.get(rule.rule_id, 0) + 1
+            )
             return None
 
         if label == "firing" and rule.has_lifecycle and state.episode_started is None:
