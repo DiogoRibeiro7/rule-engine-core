@@ -119,6 +119,7 @@ class CompiledRule:
     within: Optional[timedelta] = None
     sequence_steps: List[str] = field(default_factory=list)
     without_sensor_type: Optional[str] = None
+    partition_by: List[str] = field(default_factory=lambda: ["entity_id"])
 
     @property
     def has_lifecycle(self) -> bool:
@@ -206,6 +207,16 @@ class CompiledRule:
         if trigger_type == "scheduled" and not rule.trigger.cron:
             raise ValueError(f"Scheduled rule {rule.rule_id} requires trigger.cron")
 
+        partition_by = list(rule.partition_by) or ["entity_id"]
+        if partition_by != ["entity_id"]:
+            filters = {source.entity_id for source in rule.sources}
+            if filters != {"*"}:
+                raise ValueError(
+                    f"Rule {rule.rule_id} declares partition_by, so every source must use "
+                    "entity_id: '*'. A custom partition key replaces entity_id as the "
+                    "identity for this rule, so an entity filter would be ambiguous."
+                )
+
         within = parse_duration(rule.trigger.within)
         sequence_steps = [step["sensor_type"] for step in rule.sequence]
         without_sensor_type = rule.without.get("sensor_type") if rule.without else None
@@ -269,7 +280,30 @@ class CompiledRule:
             within=within,
             sequence_steps=sequence_steps,
             without_sensor_type=without_sensor_type,
+            partition_by=partition_by,
         )
+
+    def partition_key(self, event: SensorEvent) -> Optional[str]:
+        """Identity of the state this event belongs to, or None if it has none.
+
+        Defaults to the event's entity_id, which is why rules that declare
+        nothing behave exactly as they always have. A rule declaring
+        partition_by is keyed by those fields instead, read from the event's
+        attributes or its built-in fields. An event missing any of them cannot
+        be placed in a partition and is skipped by that rule.
+        """
+        if self.partition_by == ["entity_id"]:
+            return event.entity_id
+        parts: List[str] = []
+        for field_name in self.partition_by:
+            if field_name in event.attributes:
+                parts.append(str(event.attributes[field_name]))
+                continue
+            if hasattr(event, field_name):
+                parts.append(str(getattr(event, field_name)))
+                continue
+            return None
+        return "|".join(parts)
 
     def state_fingerprint(self) -> str:
         """Hash of the rule structure that gives stored state its meaning.
@@ -295,6 +329,7 @@ class CompiledRule:
             "within": _seconds_or_none(self.within),
             "sequence_steps": list(self.sequence_steps),
             "without_sensor_type": self.without_sensor_type,
+            "partition_by": list(self.partition_by),
         }
         canonical = json.dumps(structure, sort_keys=True, separators=(",", ":"))
         return sha256(canonical.encode("utf-8")).hexdigest()[:16]
@@ -409,7 +444,9 @@ def _build_simulation_report(
         stats[rule.rule_id].evaluations = sum(
             1
             for event in events
-            if rule.applies_to_entity(event.entity_id) and event.sensor_type in watched
+            if rule.applies_to_entity(event.entity_id)
+            and event.sensor_type in watched
+            and rule.partition_key(event) is not None
         )
         stats[rule.rule_id].suppressed = suppressed.get(rule.rule_id, 0)
 
@@ -965,33 +1002,34 @@ class CompiledEngine:
         if self._watermark is not None and timestamp < self._watermark:
             return self._handle_late_event(event, self._watermark - timestamp)
         emitted = self.advance_to(timestamp)
-        self._register_entity(event.entity_id)
-        entity_states = self._entities[event.entity_id]
 
-        for rule in self.rules:
-            if not rule.applies_to_entity(event.entity_id):
+        for declared in self.rules:
+            if not declared.applies_to_entity(event.entity_id):
                 continue
-            rule = self._rule_for(event.entity_id, rule.rule_id)
-            state = entity_states[rule.rule_id]
+            partition = declared.partition_key(event)
+            if partition is None:
+                continue
+            rule = self._rule_for(partition, declared.rule_id)
+            state = self._ensure_state(partition, rule)
             self._prune_buffer(rule, state, timestamp)
             if rule.trigger_type in {"window", "scheduled"}:
                 state.buffered_events.append(event)
             if rule.matches_event(event):
                 state.last_seen[event.sensor_type] = timestamp
                 if rule.trigger_type == "event":
-                    emitted.extend(self._evaluate_event_rule(rule, event))
+                    emitted.extend(self._evaluate_event_rule(rule, event, partition))
                 elif rule.trigger_type == "sequence":
-                    emitted.extend(self._advance_sequence(rule, state, event))
+                    emitted.extend(self._advance_sequence(rule, state, event, partition))
                 elif rule.trigger_type == "absence":
                     # The source is reporting again, so any open episode is over.
                     state.absence_fired = False
-                    emitted.extend(self._resolve_episode(rule, event.entity_id, timestamp))
+                    emitted.extend(self._resolve_episode(rule, partition, timestamp))
                 elif rule.trigger_type == "composite":
                     state.source_absent[event.sensor_type] = False
                     was_active = state.composite_active
                     state.composite_active = self._composite_condition_active(rule, state)
                     if was_active and not state.composite_active:
-                        emitted.extend(self._resolve_episode(rule, event.entity_id, timestamp))
+                        emitted.extend(self._resolve_episode(rule, partition, timestamp))
 
         self._watermark = timestamp
         return emitted
@@ -1128,9 +1166,11 @@ class CompiledEngine:
 
     def _reconcile_entity_states(self) -> None:
         """Give existing entities empty state for newly added rules, and forget removed ones."""
-        for entity_id, states in self._entities.items():
+        for partition, states in self._entities.items():
             for rule in self.rules:
-                if rule.applies_to_entity(entity_id) and rule.rule_id not in states:
+                if rule.partition_by != ["entity_id"]:
+                    continue
+                if rule.applies_to_entity(partition) and rule.rule_id not in states:
                     states[rule.rule_id] = RuleState()
             for rule_id in list(states):
                 if rule_id not in self._rule_map:
@@ -1211,12 +1251,13 @@ class CompiledEngine:
         self._watermark = _datetime_or_none(snapshot.watermark)
         self._entities = {}
         known_rule_ids = {rule.rule_id for rule in self.rules}
-        for entity_id, states in snapshot.entities.items():
-            self._register_entity(entity_id)
+        for partition, states in snapshot.entities.items():
+            restored: Dict[str, RuleState] = {}
             for rule_id, payload in states.items():
                 if rule_id not in known_rule_ids:
                     continue
-                self._entities[entity_id][rule_id] = _deserialize_rule_state(payload)
+                restored[rule_id] = _deserialize_rule_state(payload)
+            self._entities[partition] = restored
 
         self._suppressed_counts = dict(snapshot.suppressed_counts)
         metrics = snapshot.late_event_metrics
@@ -1260,13 +1301,14 @@ class CompiledEngine:
             metrics.dropped += 1
             return []
 
-        self._register_entity(event.entity_id)
-        entity_states = self._entities[event.entity_id]
         emitted: List[EmittedAlert] = []
         accepted_by_any = False
 
         for rule in self.rules:
             if not rule.applies_to_entity(event.entity_id):
+                continue
+            partition = rule.partition_key(event)
+            if partition is None:
                 continue
             if lateness > rule.allowed_lateness:
                 metrics.per_rule_dropped[rule.rule_id] = (
@@ -1278,7 +1320,7 @@ class CompiledEngine:
             metrics.per_rule_accepted[rule.rule_id] = (
                 metrics.per_rule_accepted.get(rule.rule_id, 0) + 1
             )
-            state = entity_states[rule.rule_id]
+            state = self._ensure_state(partition, rule)
             if rule.trigger_type in {"window", "scheduled"}:
                 _insert_event_in_order(state.buffered_events, event)
             if rule.matches_event(event):
@@ -1288,7 +1330,7 @@ class CompiledEngine:
                 if previous is None or event.timestamp > previous:
                     state.last_seen[event.sensor_type] = event.timestamp
                 if rule.trigger_type == "event":
-                    emitted.extend(self._evaluate_event_rule(rule, event))
+                    emitted.extend(self._evaluate_event_rule(rule, event, partition))
 
         if accepted_by_any:
             metrics.accepted += 1
@@ -1319,23 +1361,19 @@ class CompiledEngine:
         self._activate_pending_reload()
         return emitted
 
-    def _register_entity(self, entity_id: str) -> None:
-        if entity_id in self._entities:
-            return
-        states: Dict[str, RuleState] = {}
-        for rule in self.rules:
-            if not rule.applies_to_entity(entity_id):
-                continue
-            state = RuleState()
-            if rule.trigger_type == "composite":
-                state.source_absent = {sensor_type: False for sensor_type in rule.sensor_types}
-            if rule.trigger_type == "window" and rule.slide is not None:
-                state.next_window_end = None
-            if rule.trigger_type == "scheduled" and rule.cron is not None:
-                now = self._resolve_schedule_start()
-                state.next_schedule_fire = _next_cron_fire(now, rule.cron)
-            states[rule.rule_id] = state
-        self._entities[entity_id] = states
+    def _ensure_state(self, partition: str, rule: CompiledRule) -> RuleState:
+        states = self._entities.setdefault(partition, {})
+        existing = states.get(rule.rule_id)
+        if existing is not None:
+            return existing
+        state = RuleState()
+        if rule.trigger_type == "composite":
+            state.source_absent = {sensor_type: False for sensor_type in rule.sensor_types}
+        if rule.trigger_type == "scheduled" and rule.cron is not None:
+            now = self._resolve_schedule_start()
+            state.next_schedule_fire = _next_cron_fire(now, rule.cron)
+        states[rule.rule_id] = state
+        return state
 
     def _resolve_schedule_start(self) -> datetime:
         if self._watermark is not None:
@@ -1527,14 +1565,16 @@ class CompiledEngine:
         nothing is delivered. Safe to call on a live engine.
         """
         now = event.timestamp
-        states = self._entities.get(event.entity_id, {})
         explanations: List[RuleExplanation] = []
         for declared in self.rules:
-            rule = self._rule_for(event.entity_id, declared.rule_id)
-            state = states.get(rule.rule_id)
+            partition = declared.partition_key(event)
+            if partition is None:
+                continue
+            rule = self._rule_for(partition, declared.rule_id)
+            state = self._entities.get(partition, {}).get(rule.rule_id)
             if state is None:
                 state = RuleState()
-            explanations.append(self._explain_rule(rule, state, event, now))
+            explanations.append(self._explain_rule(rule, state, event, now, partition))
         return ExplainResult(
             entity_id=event.entity_id,
             timestamp=now.isoformat(),
@@ -1542,14 +1582,20 @@ class CompiledEngine:
         )
 
     def _explain_rule(
-        self, rule: CompiledRule, state: RuleState, event: SensorEvent, now: datetime
+        self,
+        rule: CompiledRule,
+        state: RuleState,
+        event: SensorEvent,
+        now: datetime,
+        partition: Optional[str] = None,
     ) -> RuleExplanation:
+        identity = partition if partition is not None else event.entity_id
         checks: List[ExplainCheck] = []
 
         def finish(outcome: str, detail: str = "") -> RuleExplanation:
             return RuleExplanation(
                 rule_id=rule.rule_id,
-                entity_id=event.entity_id,
+                entity_id=identity,
                 trigger_type=rule.trigger_type,
                 outcome=outcome,
                 checks=checks,
@@ -1783,7 +1829,11 @@ class CompiledEngine:
         return finish("would_emit", "would emit as " + label)
 
     def _advance_sequence(
-        self, rule: CompiledRule, state: RuleState, event: SensorEvent
+        self,
+        rule: CompiledRule,
+        state: RuleState,
+        event: SensorEvent,
+        partition: Optional[str] = None,
     ) -> List[EmittedAlert]:
         """Advance partial matches for a sequence rule against one event.
 
@@ -1828,8 +1878,9 @@ class CompiledEngine:
             return []
 
         state.partial_matches = []
+        identity = partition if partition is not None else event.entity_id
         values = {
-            "entity_id": event.entity_id,
+            "entity_id": identity,
             "rule_id": rule.rule_id,
             "sensor_type": event.sensor_type,
             "value": event.value,
@@ -1842,32 +1893,35 @@ class CompiledEngine:
             rule.condition_operator, rule.operands, values
         ):
             return []
-        label = self._lifecycle_label(rule, event.entity_id, event.timestamp)
+        label = self._lifecycle_label(rule, identity, event.timestamp)
         if label is None:
             return []
         context = RuleContext(
-            entity_id=event.entity_id,
+            entity_id=identity,
             rule_id=rule.rule_id,
             timestamp=event.timestamp,
             duration=event.timestamp - completed_start,
         )
         return self._build_alerts(rule, context, values, lifecycle=label)
 
-    def _evaluate_event_rule(self, rule: CompiledRule, event: SensorEvent) -> List[EmittedAlert]:
+    def _evaluate_event_rule(
+        self, rule: CompiledRule, event: SensorEvent, partition: Optional[str] = None
+    ) -> List[EmittedAlert]:
+        identity = partition if partition is not None else event.entity_id
         values = {
-            "entity_id": event.entity_id,
+            "entity_id": identity,
             "sensor_type": event.sensor_type,
             "value": event.value,
             "timestamp_ms": event.timestamp_ms,
             "rule_id": rule.rule_id,
         }
         if not _evaluate_operands(rule.condition_operator, rule.operands, values):
-            return self._resolve_episode(rule, event.entity_id, event.timestamp)
-        label = self._lifecycle_label(rule, event.entity_id, event.timestamp)
+            return self._resolve_episode(rule, identity, event.timestamp)
+        label = self._lifecycle_label(rule, identity, event.timestamp)
         if label is None:
             return []
         context = RuleContext(
-            entity_id=event.entity_id,
+            entity_id=identity,
             rule_id=rule.rule_id,
             timestamp=event.timestamp,
         )

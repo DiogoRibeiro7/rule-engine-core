@@ -57,6 +57,10 @@ Suggested `Upgrade Notes` format:
   diffing the alerts, with per-rule deltas in alert and suppression volume.
 - `CompiledEngine.suppressed_counts()` reporting emissions blocked by a cooldown
   per rule. Engine snapshots carry it; older snapshots load with none.
+- `partition_by`, an optional per-rule list of fields replacing `entity_id` as
+  the key for a rule's state, timers, episodes, and reported identity.
+- `SensorEvent.attributes`, an optional map carrying the extra dimensions a
+  partition key can be built from.
 
 ### Upgrade Notes
 
@@ -65,6 +69,11 @@ Suggested `Upgrade Notes` format:
 - The grammar is deliberately restricted: no quantifiers, alternation, nesting,
   per-step conditions, or unbounded patterns. Write repeated steps out
   explicitly.
+- Omitting `partition_by` is exactly `partition_by: [entity_id]`, so existing
+  rules are unaffected. A rule that declares it must use `entity_id: "*"` in
+  every source, and an event missing a partition field is skipped by that rule.
+- Partitioning is a state-model change, not a distribution mechanism. The engine
+  remains single-process and in-memory.
 
 ## 0.3.0 - 2026-08-19
 

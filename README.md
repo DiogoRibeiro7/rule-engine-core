@@ -121,6 +121,22 @@ Aggregations available to `window` rules: `count`, `sum`, `mean`, `min`,
 `max`, `stddev`, `delta`, `rate`, and `percentile`, optionally bucketed by a
 `sub_window`.
 
+### Partitioning
+
+A rule keeps independent state per `entity_id` by default. `partition_by`
+replaces that key:
+
+```yaml
+partition_by:
+  - customer_id
+  - device_id
+```
+
+Values come from an event's `attributes` map or its built-in fields. The
+partition key becomes the identity for that rule — its state, timers, episodes,
+and reported `entity_id` — and partitions never share state. It is a state-model
+change, not a distribution mechanism: the engine stays single-process.
+
 ### Temporal sequences
 
 ```yaml

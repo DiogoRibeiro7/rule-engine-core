@@ -11,7 +11,7 @@ A rule document must be a YAML object with:
 - required: `rule_id`, `actions`
 - exactly one of: `source` or `sources`
 - optional: `description`, `trigger`, `condition`, `aggregations`, `allowed_lateness`,
-  `emit`
+  `emit`, `partition_by`
 
 Top-level unknown fields are rejected.
 
@@ -197,6 +197,56 @@ Rejected fields:
 - `duration`
 - `slide`
 - `timeout`
+
+## Partitioning
+
+By default a rule keeps independent state per `entity_id`. `partition_by`
+replaces that key with one or more fields:
+
+```yaml
+partition_by:
+  - customer_id
+  - device_id
+```
+
+The partition key becomes the identity for that rule: its state, its timers, its
+alert episodes, and the `entity_id` reported on its alerts. A composite key
+joins the values with `|`.
+
+Field values are read from the event's `attributes` map first, then from its
+built-in fields (`entity_id`, `sensor_type`, `value`, `timestamp_ms`):
+
+```python
+SensorEvent(
+    entity_id="device-1",
+    sensor_type="source_alpha",
+    value=91.0,
+    timestamp_ms=1704067260000,
+    attributes={"customer_id": "acme", "region": "eu"},
+)
+```
+
+Rules:
+
+- **Ordering and isolation hold inside a partition.** Two partitions never share
+  state, so a cooldown in one cannot suppress another.
+- **A rule declaring `partition_by` must use `entity_id: "*"` in every source.**
+  A custom key replaces `entity_id` as the identity, so an entity filter
+  alongside it would be ambiguous. This is rejected at compile time.
+- **An event missing any partition field is skipped by that rule.** It cannot be
+  placed in a partition. Other rules still see it, and `explain()` omits the
+  rule rather than reporting a misleading result.
+- **The partition scheme is part of the rule state fingerprint.** Changing it
+  invalidates a checkpoint and is refused on restore, because the retained state
+  is keyed by something else.
+
+Omitting `partition_by` is exactly equivalent to `partition_by: [entity_id]`.
+
+### Not A Distribution Mechanism
+
+Partitioning is a state-model change. It defines independent keyed state and is
+a clean path toward parallel execution later, but the engine remains
+single-process and in-memory. Nothing here makes it distributed.
 
 ## Alert Lifecycle
 
@@ -494,7 +544,9 @@ Not supported by the current repo surface:
 - live streaming ingestion
 - workflow orchestration or stateful infrastructure integrations
 - recomputing windows that have already closed when a late event arrives
-- per-source or per-entity watermarks; the watermark is engine-wide
+- per-source or per-entity watermarks; the watermark is engine-wide, so
+  partitions share one clock
+- parallel or distributed execution across partitions
 - alert acknowledgement, which would need an inbound operator API
 - sequence quantifiers, alternation, nesting, or per-step conditions
 

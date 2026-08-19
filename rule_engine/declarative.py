@@ -50,6 +50,11 @@ _DECLARATIVE_RULE_SCHEMA: Dict[str, Any] = {
         "rule_id": {"type": "string"},
         "description": {"type": "string"},
         "allowed_lateness": {"type": "string"},
+        "partition_by": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string"},
+        },
         "emit": {
             "type": "object",
             "properties": {
@@ -230,6 +235,7 @@ class DeclarativeRule:
     actions: List[Action]
     aggregations: List[Dict[str, Any]] = field(default_factory=list)
     allowed_lateness: Optional[str] = None
+    partition_by: List[str] = field(default_factory=list)
     emit: Optional[Emit] = None
     sequence: List[Dict[str, Any]] = field(default_factory=list)
     without: Optional[Dict[str, Any]] = None
@@ -493,6 +499,7 @@ def load_rule_yaml(text: str) -> DeclarativeRule:
         actions=_load_actions(document["rule_id"], document.get("actions", [])),
         aggregations=document.get("aggregations", []),
         allowed_lateness=document.get("allowed_lateness"),
+        partition_by=document.get("partition_by", []),
         emit=_load_emit(document.get("emit")),
         sequence=document.get("sequence", []),
         without=document.get("without"),

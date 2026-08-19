@@ -11,6 +11,7 @@ class SensorEvent:
     sensor_type: str
     value: float
     timestamp_ms: int
+    attributes: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def timestamp(self) -> datetime:

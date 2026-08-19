@@ -36,7 +36,7 @@ correctness fixes                 [done]
           → temporal sequences      [done]
             → explainability        [done]
               → simulation / backtesting [done]
-                → partitioned execution
+                → partitioned execution  [done]
 ```
 
 ---
@@ -305,16 +305,11 @@ compares a fresh engine against a used one and requires identical reports.
 
 ---
 
-### Stage 8 — Partitioning and keyed state
+### Stage 8 — Partitioning and keyed state — complete
 
-**Goal.** Make the entity model explicit rather than assumed:
+**Goal.** Make the entity model explicit rather than assumed.
 
-$$K(e) \rightarrow \text{independent rule state}$$
-
-Today `SensorEvent.entity_id` is a single string, and every source in a rule must
-share one `entity_id` filter. Partitioning is effectively hardcoded to one field.
-
-**Shape.**
+**Delivered.**
 
 ```yaml
 partition_by:
@@ -322,15 +317,27 @@ partition_by:
   - device_id
 ```
 
-with guaranteed ordering and state isolation *within* each partition.
+- The partition key becomes the identity for a rule: its state, timers, alert
+  episodes, and the `entity_id` reported on its alerts. Composite keys join with
+  `|`. Values are read from an event's new `attributes` map, then from its
+  built-in fields.
+- Omitting `partition_by` is exactly `partition_by: [entity_id]`, which is why
+  every pre-existing test passed unchanged through the restructure.
+- Ordering and state isolation hold within a partition: a cooldown in one cannot
+  suppress another, and absence timers run independently per partition.
+- The partition scheme is part of the state fingerprint, so changing it is
+  refused on restore rather than silently reinterpreting state keyed by
+  something else.
+- A rule declaring `partition_by` must use `entity_id: "*"` in every source,
+  rejected at compile time. A custom key replaces `entity_id` as the identity,
+  so an entity filter alongside it would be ambiguous.
+- An event missing a partition field is skipped by that rule rather than being
+  forced into a wrong partition, and `explain()` omits the rule instead of
+  reporting a misleading result.
 
-**Explicit non-goal.** This creates a clean path toward parallel execution
-later. It does not make the engine distributed, and the documentation should not
-imply that it does.
-
-**Done when.** Composite partition keys work end to end, state isolation between
-partitions is asserted by test, and `docs/scope-boundary.md` records that
-partitioning is a state-model change rather than a distribution mechanism.
+**Explicit non-goal, restated in the docs.** This is a state-model change. It is
+a clean path toward parallel execution later, and the engine remains
+single-process and in-memory. Nothing here makes it distributed.
 
 ---
 
