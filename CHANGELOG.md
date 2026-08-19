@@ -29,7 +29,9 @@ Suggested `Upgrade Notes` format:
   Existing configs remain valid.
 ```
 
-## Unreleased
+## 0.4.0 - 2026-08-19
+
+Temporal patterns, declarative partitioning, and inspection.
 
 ### Added
 
