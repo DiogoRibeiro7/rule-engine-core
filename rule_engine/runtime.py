@@ -8,17 +8,20 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from math import ceil
 from statistics import mean, pstdev
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from .declarative import Action, DeclarativeRule
 from .models import (
+    RELOAD_POLICIES,
     EmittedAlert,
     EngineConfig,
     EngineSnapshot,
     EvaluationResult,
     LateEventMetrics,
+    ReloadReport,
     ReplayDeliveryReport,
     RuleMetadata,
+    RuleReloadOutcome,
 )
 from .sinks import (
     DeliveryRequest,
@@ -682,6 +685,11 @@ class CompiledEngine:
             (rule.allowed_lateness for rule in self.rules), default=timedelta(0)
         )
         self._late_event_metrics = LateEventMetrics()
+        # rule_id -> the previous definition, kept alive while entities drain
+        self._draining_rules: Dict[str, CompiledRule] = {}
+        self._draining_entities: Dict[str, Set[str]] = {}
+        self._pending_reload: Optional[Tuple[List[CompiledRule], str, datetime]] = None
+        self._last_reload_report: Optional[ReloadReport] = None
 
     def replay(
         self, events: Iterable[SensorEvent], until: Optional[datetime] = None
@@ -734,6 +742,7 @@ class CompiledEngine:
         for rule in self.rules:
             if not rule.applies_to_entity(event.entity_id):
                 continue
+            rule = self._rule_for(event.entity_id, rule.rule_id)
             state = entity_states[rule.rule_id]
             self._prune_buffer(rule, state, timestamp)
             if rule.trigger_type in {"window", "scheduled"}:
@@ -755,6 +764,169 @@ class CompiledEngine:
 
         self._watermark = timestamp
         return emitted
+
+    def reload(
+        self,
+        rules: Iterable[CompiledRule],
+        policy: str = "preserve",
+        activate_at: Optional[datetime] = None,
+    ) -> ReloadReport:
+        """Swap the rule set without rebuilding the engine.
+
+        ``policy`` decides what happens to retained state:
+
+        - ``reset`` discards it,
+        - ``preserve`` keeps it where the rule's structure is unchanged and
+          discards it otherwise,
+        - ``drain`` keeps the previous definition running for entities with an
+          open alert episode until that episode resolves.
+
+        With ``activate_at`` the swap is staged and applied once the watermark
+        reaches that instant, so a change can be lined up ahead of time.
+        """
+        rules = list(rules)
+        if policy not in RELOAD_POLICIES:
+            supported = ", ".join(sorted(RELOAD_POLICIES))
+            raise ValueError(f"Unsupported reload policy '{policy}'; supported: {supported}")
+
+        if activate_at is not None:
+            target = _normalize_datetime(activate_at)
+            if self._watermark is None or target > self._watermark:
+                self._pending_reload = (rules, policy, target)
+                report = ReloadReport(applied=False, activate_at=target.isoformat())
+                self._last_reload_report = report
+                return report
+
+        return self._apply_reload(rules, policy)
+
+    def last_reload_report(self) -> Optional[ReloadReport]:
+        """The most recent reload result, including one applied by a staged activation."""
+        return self._last_reload_report
+
+    def _activate_pending_reload(self) -> None:
+        if self._pending_reload is None or self._watermark is None:
+            return
+        rules, policy, target = self._pending_reload
+        if self._watermark < target:
+            return
+        self._pending_reload = None
+        self._apply_reload(rules, policy)
+
+    def _apply_reload(self, rules: List[CompiledRule], policy: str) -> ReloadReport:
+        new_map = {rule.rule_id: rule for rule in rules}
+        old_map = dict(self._rule_map)
+        outcomes: List[RuleReloadOutcome] = []
+
+        for rule_id in old_map:
+            if rule_id not in new_map:
+                self._drop_rule_state(rule_id)
+                self._draining_rules.pop(rule_id, None)
+                self._draining_entities.pop(rule_id, None)
+                outcomes.append(RuleReloadOutcome(rule_id=rule_id, outcome="removed"))
+
+        for rule in rules:
+            previous = old_map.get(rule.rule_id)
+            if previous is None:
+                outcomes.append(RuleReloadOutcome(rule_id=rule.rule_id, outcome="added"))
+                continue
+
+            compatible = previous.state_fingerprint() == rule.state_fingerprint()
+
+            if policy == "reset":
+                self._drop_rule_state(rule.rule_id)
+                outcomes.append(
+                    RuleReloadOutcome(
+                        rule_id=rule.rule_id, outcome="reset", compatible=compatible
+                    )
+                )
+                continue
+
+            open_episodes = sorted(
+                entity_id
+                for entity_id, states in self._entities.items()
+                if rule.rule_id in states and states[rule.rule_id].episode_started is not None
+            )
+
+            if policy == "drain" and open_episodes:
+                self._draining_rules[rule.rule_id] = previous
+                self._draining_entities[rule.rule_id] = set(open_episodes)
+                if not compatible:
+                    self._drop_rule_state(rule.rule_id, exclude=set(open_episodes))
+                outcomes.append(
+                    RuleReloadOutcome(
+                        rule_id=rule.rule_id,
+                        outcome="draining",
+                        compatible=compatible,
+                        draining_entities=open_episodes,
+                        detail="previous definition stays active until these episodes resolve",
+                    )
+                )
+                continue
+
+            if compatible:
+                outcomes.append(
+                    RuleReloadOutcome(rule_id=rule.rule_id, outcome="preserved", compatible=True)
+                )
+            else:
+                self._drop_rule_state(rule.rule_id)
+                outcomes.append(
+                    RuleReloadOutcome(
+                        rule_id=rule.rule_id,
+                        outcome="reset",
+                        compatible=False,
+                        detail="state discarded: the rule's structure changed",
+                    )
+                )
+
+        self.rules = rules
+        self._rule_map = new_map
+        self._max_allowed_lateness = max(
+            (rule.allowed_lateness for rule in rules), default=timedelta(0)
+        )
+        self._reconcile_entity_states()
+
+        report = ReloadReport(applied=True, outcomes=outcomes)
+        self._last_reload_report = report
+        return report
+
+    def _drop_rule_state(self, rule_id: str, exclude: Optional[Set[str]] = None) -> None:
+        for entity_id, states in self._entities.items():
+            if exclude is not None and entity_id in exclude:
+                continue
+            states.pop(rule_id, None)
+
+    def _reconcile_entity_states(self) -> None:
+        """Give existing entities empty state for newly added rules, and forget removed ones."""
+        for entity_id, states in self._entities.items():
+            for rule in self.rules:
+                if rule.applies_to_entity(entity_id) and rule.rule_id not in states:
+                    states[rule.rule_id] = RuleState()
+            for rule_id in list(states):
+                if rule_id not in self._rule_map:
+                    states.pop(rule_id)
+
+    def _rule_for(self, entity_id: str, rule_id: str) -> CompiledRule:
+        """The definition governing this entity, which may be a draining one."""
+        draining = self._draining_rules.get(rule_id)
+        if draining is not None and entity_id in self._draining_entities.get(rule_id, set()):
+            return draining
+        return self._rule_map[rule_id]
+
+    def _rules_for_entity(self, entity_id: str) -> List[CompiledRule]:
+        return [self._rule_for(entity_id, rule.rule_id) for rule in self.rules]
+
+    def _finish_drain(self, rule_id: str, entity_id: str) -> None:
+        entities = self._draining_entities.get(rule_id)
+        if entities is None or entity_id not in entities:
+            return
+        entities.discard(entity_id)
+        if not entities:
+            self._draining_entities.pop(rule_id, None)
+            self._draining_rules.pop(rule_id, None)
+
+    def draining_rule_ids(self) -> List[str]:
+        """Rules with at least one entity still running the previous definition."""
+        return sorted(self._draining_rules)
 
     def snapshot(self) -> EngineSnapshot:
         """Capture watermark, per-entity rule state, and late-event counters."""
@@ -907,6 +1079,7 @@ class CompiledEngine:
             self._watermark = next_due
             emitted.extend(self._fire_due_timers(next_due))
         self._watermark = target
+        self._activate_pending_reload()
         return emitted
 
     def _register_entity(self, entity_id: str) -> None:
@@ -939,9 +1112,9 @@ class CompiledEngine:
 
     def _next_due_time(self) -> Optional[datetime]:
         due_times: List[datetime] = []
-        for entity_states in self._entities.values():
+        for entity_id, entity_states in self._entities.items():
             for rule_id, state in entity_states.items():
-                rule = self._rule_map[rule_id]
+                rule = self._rule_for(entity_id, rule_id)
                 if rule.trigger_type == "absence":
                     last_seen = state.last_seen.get(rule.sensor_types[0])
                     if (
@@ -971,7 +1144,7 @@ class CompiledEngine:
         emitted: List[EmittedAlert] = []
         for entity_id, entity_states in self._entities.items():
             for rule_id, state in entity_states.items():
-                rule = self._rule_map[rule_id]
+                rule = self._rule_for(entity_id, rule_id)
                 if (
                     state.episode_started is not None
                     and state.next_repeat_fire is not None
@@ -1248,6 +1421,9 @@ class CompiledEngine:
         }
         alerts = self._build_alerts(rule, context, variables, lifecycle="resolved")
         self._close_episode(state)
+        # The episode this entity was draining is over, so it can take the new
+        # definition from here on.
+        self._finish_drain(rule.rule_id, entity_id)
         return alerts
 
     @staticmethod

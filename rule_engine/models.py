@@ -115,6 +115,57 @@ class EvaluationResult:
         return json.dumps(self.to_dict(), indent=2)
 
 
+RELOAD_POLICIES = ("reset", "preserve", "drain")
+
+
+@dataclass
+class RuleReloadOutcome:
+    """What a reload did to one rule's retained state."""
+
+    rule_id: str
+    outcome: str
+    compatible: Optional[bool] = None
+    draining_entities: List[str] = field(default_factory=list)
+    detail: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "rule_id": self.rule_id,
+            "outcome": self.outcome,
+            "compatible": self.compatible,
+            "draining_entities": list(self.draining_entities),
+            "detail": self.detail,
+        }
+
+
+@dataclass
+class ReloadReport:
+    """Result of a rule reload, per rule."""
+
+    applied: bool = True
+    activate_at: Optional[str] = None
+    outcomes: List[RuleReloadOutcome] = field(default_factory=list)
+
+    def by_rule(self, rule_id: str) -> Optional[RuleReloadOutcome]:
+        for outcome in self.outcomes:
+            if outcome.rule_id == rule_id:
+                return outcome
+        return None
+
+    def rule_ids_with_outcome(self, outcome: str) -> List[str]:
+        return [entry.rule_id for entry in self.outcomes if entry.outcome == outcome]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "applied": self.applied,
+            "activate_at": self.activate_at,
+            "outcomes": [entry.to_dict() for entry in self.outcomes],
+        }
+
+    def to_json(self, indent: Optional[int] = None) -> str:
+        return json.dumps(self.to_dict(), indent=indent)
+
+
 SNAPSHOT_VERSION = 1
 
 

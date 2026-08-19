@@ -42,6 +42,15 @@ Suggested `Upgrade Notes` format:
   be joined back to the alert that opened it.
 - Episode state is covered by engine snapshots, so a cooldown still suppresses
   and a pending reminder still fires after a restart.
+- `CompiledEngine.reload()` swaps the rule set on a live engine under an explicit
+  state-migration policy: `preserve` keeps state where the rule's structure is
+  unchanged, `reset` discards it, and `drain` keeps the previous definition
+  running for entities with an open alert episode until it resolves.
+- `reload(activate_at=...)` stages a swap until the watermark reaches that
+  instant, with `CompiledEngine.last_reload_report()` returning the result once
+  it applies.
+- A typed `ReloadReport` recording each rule as preserved, reset, draining,
+  added, or removed, with `to_dict()`/`to_json()` exports.
 
 ### Changed
 
@@ -58,6 +67,8 @@ Suggested `Upgrade Notes` format:
   declaring `emit`.
 - Alert acknowledgement is explicitly not supported; it needs an inbound
   operator API that is outside this repo's scope.
+- Snapshots do not carry in-progress drains or staged reloads. Let a drain
+  finish, or re-issue the reload after restoring.
 
 ## 0.2.0 - 2026-08-18
 

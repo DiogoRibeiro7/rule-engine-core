@@ -21,8 +21,10 @@ from .models import (
     EngineSnapshot,
     EvaluationResult,
     LateEventMetrics,
+    ReloadReport,
     ReplayDeliveryReport,
     RuleMetadata,
+    RuleReloadOutcome,
 )
 from .runtime import CompiledEngine
 from .sinks import (
@@ -80,6 +82,8 @@ __all__ = [
     "EngineSnapshot",
     "EvaluationResult",
     "LateEventMetrics",
+    "ReloadReport",
+    "RuleReloadOutcome",
     "EntityWindow",
     "FileDeadLetterStore",
     "FileSink",

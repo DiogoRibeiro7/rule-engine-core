@@ -202,6 +202,18 @@ restoring into a rule whose windows or timers changed raises rather than
 silently reinterpreting state. Resuming from a checkpoint yields the same
 alerts as an uninterrupted replay.
 
+Rules can also be swapped on a live engine:
+
+```python
+report = engine.reload(new_rules, policy="preserve")   # or "reset" / "drain"
+```
+
+`preserve` keeps state where the rule's structure is unchanged, `reset` discards
+it, and `drain` leaves the previous definition running for entities with an open
+alert episode until it resolves. Passing `activate_at` stages the swap until the
+watermark reaches that instant. The returned report says what happened to each
+rule.
+
 ## CLI
 
 ```bash

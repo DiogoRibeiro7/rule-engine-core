@@ -183,7 +183,64 @@ new rule set start with empty state, so adding and removing rules between
 checkpoints is supported. The snapshot watermark takes precedence over
 `EngineConfig.initial_watermark`.
 
-## 8. When To Use Which Surface
+## 8. Reload Rules Without Restarting
+
+`reload()` swaps the rule set on a live engine and reports what happened to each
+rule's retained state.
+
+```python
+report = engine.reload(new_rules, policy="preserve")
+
+for outcome in report.outcomes:
+    print(outcome.rule_id, outcome.outcome, outcome.compatible)
+```
+
+### Policies
+
+| Policy | Effect on retained state |
+| --- | --- |
+| `preserve` | Kept where the rule's structure is unchanged; discarded otherwise |
+| `reset` | Always discarded |
+| `drain` | Previous definition stays active for entities with an open alert episode until it resolves |
+
+"Structure" is the same fingerprint checkpoints use: trigger type, entity filter,
+sources, window duration and slide, timeouts, cron, and lookback. Retuning a
+threshold, rewording a message, changing a severity, or adjusting `emit` keeps
+state under `preserve`; changing a window or a timeout does not.
+
+Each rule is reported as `preserved`, `reset`, `draining`, `added`, or
+`removed`. Rules dropped from the set lose their state; rules newly added start
+empty for entities that already exist.
+
+### Draining
+
+`drain` matters for rules with an `emit` block, because it is defined in terms of
+open alert episodes. An entity mid-episode keeps the old definition until that
+episode resolves, so an alert that fired under the old rule is closed by the old
+rule rather than being orphaned. Entities with no open episode switch at once.
+
+```python
+engine.reload(new_rules, policy="drain")
+engine.draining_rule_ids()   # ["source_gap"] until the open episodes close
+```
+
+### Staged activation
+
+```python
+engine.reload(new_rules, policy="reset", activate_at=cutover_time)
+```
+
+The swap is held until the watermark reaches `activate_at`, then applied
+automatically. `reload()` returns a report with `applied=False`; the applied
+report is available afterwards from `engine.last_reload_report()`.
+
+### Limitation
+
+Snapshots do not carry in-progress drains or staged reloads. A restore puts every
+entity on the rules passed to `restore()`. Let a drain finish, or re-issue the
+reload after restoring.
+
+## 9. When To Use Which Surface
 
 - Use `build_engine_from_yaml(...)` for the smallest embedding surface.
 - Use `build_engine_from_files(...)` when files are the deployment artifact.

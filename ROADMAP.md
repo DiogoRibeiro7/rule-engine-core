@@ -32,7 +32,7 @@ correctness fixes                 [done]
   → late-event semantics          [partial]
     → checkpoint / recovery        [done]
       → suppression + alert lifecycle [done]
-        → rule versioning + hot reload
+        → rule versioning + hot reload [done]
           → temporal sequences
             → explainability
               → simulation / backtesting
@@ -175,26 +175,35 @@ handle that a retraction would use.
 
 ---
 
-### Stage 4 — Rule versioning and hot reload
+### Stage 4 — Rule versioning and hot reload — complete
 
-**Goal.** Configuration-driven systems eventually have to manage rule
-lifecycle. Support `rule-v1 → rule-v2` without recreating the process.
+**Goal.** Configuration-driven systems eventually have to manage rule lifecycle.
+Swap `rule-v1` for `rule-v2` without recreating the process.
 
-**Shape.** Explicit state-migration policies per reload:
+**Delivered.**
 
-- reset state,
-- preserve compatible state,
-- drain the old version,
-- activate the new version at watermark $t$.
+```python
+report = engine.reload(new_rules, policy="preserve", activate_at=None)
+```
 
-"Compatible" needs a definition, not a heuristic: a structural fingerprint of
-the parts of a rule that own state (trigger type, window geometry, partition
-key), computed at compile time. A change to any of those forces reset or drain;
-changes elsewhere — message templates, sinks, severity — can preserve state.
+- `preserve` keeps state where the rule's structure is unchanged and discards it
+  otherwise; `reset` always discards; `drain` keeps the previous definition
+  running for entities with an open alert episode until it resolves, so an alert
+  that fired under the old rule is closed by the old rule.
+- "Compatible" is the Stage 2 state fingerprint, exactly as anticipated: trigger
+  type, entity filter, sources, window geometry, timeouts, cron, lookback.
+  Thresholds, messages, severities, sinks, and `emit` are excluded, so ordinary
+  tuning does not cost state.
+- `activate_at` stages a swap until the watermark reaches that instant;
+  `last_reload_report()` returns the result once it applies.
+- A typed `ReloadReport` records each rule as `preserved`, `reset`, `draining`,
+  `added`, or `removed`, with the draining entities named.
 
-**Done when.** Each policy has a test asserting exactly which state survives a
-reload, and reloading a rule mid-replay produces documented, deterministic
-output.
+**Known limitation.** Snapshots do not carry in-progress drains or staged
+reloads: a restore puts every entity on the rules passed to `restore()`.
+Serializing a draining definition would mean serializing whole compiled rules
+into the snapshot, which is a bigger change than it is worth right now. The
+behaviour is pinned by test so it cannot drift silently.
 
 ---
 
