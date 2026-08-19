@@ -374,7 +374,7 @@ Requires Python 3.11+. The only runtime dependency is PyYAML.
 | `CITATION.cff` | Machine-readable citation metadata |
 | `.zenodo.json` | Zenodo deposit metadata for archived releases |
 | `CHANGELOG.md` | User-visible history |
-| `ROADMAP.md` | Staged plan for deepening the engine's temporal semantics |
+| `ROADMAP.md` | Design log of the completed stages, and what is deliberately not done |
 
 Licensed under MIT.
 

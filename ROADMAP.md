@@ -2,30 +2,19 @@
 
 ## Positioning
 
-The target this roadmap builds toward:
+The target this roadmap was built toward, and now describes:
 
 > **A deterministic, typed, event-time rule engine with explainable temporal
 > semantics.**
 
-Not: *a Python rules package with many integrations.* That distinction drives
-every prioritization decision below. Work is preferred when it deepens the
-temporal or operational semantics of the engine, and deferred when it only
-widens the surface area.
+Not: *a Python rules package with many integrations.* That distinction drove
+every prioritization decision below, and remains the bar for anything added
+next. Work is preferred when it deepens the temporal or operational semantics of
+the engine, and deferred when it only widens the surface area.
 
-The initial core build-out is complete. The engine compiles and validates
-declarative rules, replays them deterministically, and delivers alerts through
-five maintained sink adapters with retry, dead-letter, and metrics support. See
-`CHANGELOG.md` for the detailed history and `README.md` for the current
-capability surface.
+## Status
 
-The remaining work is a sequence of depth increases, not a backlog of
-integrations.
-
-## Sequence
-
-Each stage assumes the previous one. The ordering is deliberate: temporal
-correctness comes before durability, durability before lifecycle, and
-expressiveness before tooling that explains it.
+**The planned sequence is complete.** Every stage below shipped, in order:
 
 ```text
 correctness fixes                 [done]
@@ -39,7 +28,67 @@ correctness fixes                 [done]
                 → partitioned execution  [done]
 ```
 
+The stage records that follow are kept as a design log rather than a plan. Each
+one states what shipped, and — more usefully — which constraints the
+implementation settled and why. Several decisions there are load-bearing and
+easy to undo by accident, in particular:
+
+- **`within` is required on a sequence.** Bounding the pattern is what bounds
+  partial-match state, which is what makes it snapshottable.
+- **Timer progress is global while lateness is per entity.** An entity that goes
+  silent never advances its own clock, so per-entity timers would mean its
+  absence alert never fires.
+- **Emission policy is outside the state fingerprint.** Retuning a cooldown
+  changes what a rule emits, not what its retained state means, so it must not
+  invalidate a checkpoint.
+
+See `CHANGELOG.md` for release history and `README.md` for the current
+capability surface.
+
+## What Is Next
+
+Nothing here is scheduled. Each is a decision the next change set would have to
+make deliberately.
+
+### Carried limitations
+
+These are known, tested where testable, and documented where they surface:
+
+- **Per-source watermarks.** Lateness is tracked per entity, not per sensor
+  type. An entity whose sensors report at very different rates still shares one
+  lateness reference.
+- **Drains and staged reloads are not snapshot state.** A restore puts every
+  entity on the rules passed to `restore()`. Let a drain finish, or re-issue the
+  reload after restoring.
+- **Recompute covers window rules only.** Event rules already evaluate a
+  tolerated late event directly, and absence and composite state only ever
+  advances, so neither has a closed decision to revisit. Sequences are not
+  recomputed.
+
+### Declined, with reasons
+
+Reopening either means moving a scope boundary, not just writing code:
+
+- **Alert acknowledgement.** Needs an inbound operator API, which contradicts
+  this repo's boundary against being a rule-management product. It belongs in
+  the alerting system consuming these payloads.
+- **A wider sequence grammar.** Quantifiers, alternation, nesting, and per-step
+  conditions are absent by design. The restriction is what keeps partial-match
+  state bounded and the language readable.
+
+### Worth revisiting
+
+- **The scope boundary itself.** `docs/scope-boundary.md` was written when the
+  engine was a replay core with five sinks. The runtime has grown considerably
+  since — episodes, hot reload, sequences, partitioning, explain, backtesting —
+  and the boundary should be re-read against what the repo now actually is.
+- **Parallel execution across partitions.** Partitioning made state keys
+  explicit, which is the prerequisite. Acting on it would be a genuine change in
+  what this repo claims to be, and belongs in the scope boundary first.
+
 ---
+
+## Stage log
 
 ### Stage 0 — Correctness fixes — complete
 
@@ -346,8 +395,8 @@ single-process and in-memory. Nothing here makes it distributed.
 
 ## Not prioritized
 
-Deliberately postponed. Each would grow the repository without deepening the
-engineering:
+Deliberately postponed, and still postponed. Each would grow the repository
+without deepening the engineering:
 
 - Kafka, Redis, or database integrations
 - Kubernetes or deployment tooling
@@ -361,6 +410,8 @@ reasoning; changes to that boundary belong there first.
 
 ## Maintenance rule
 
-Update this file when a stage completes or is materially re-scoped, and keep
-`README.md` and `docs/scope-boundary.md` aligned in the same change set.
-Per-change detail belongs in `CHANGELOG.md`, not here.
+The stage log is history: append to it rather than editing it, so the reasoning
+behind a decision stays readable next to the decision. Update **Status** and
+**What Is Next** when that picture changes, and keep `README.md` and
+`docs/scope-boundary.md` aligned in the same change set. Per-change detail
+belongs in `CHANGELOG.md`, not here.

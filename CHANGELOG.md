@@ -29,7 +29,9 @@ Suggested `Upgrade Notes` format:
   Existing configs remain valid.
 ```
 
-## Unreleased
+## 0.5.0 - 2026-08-19
+
+Late-data reconciliation and per-entity lateness.
 
 ### Added
 
