@@ -114,11 +114,31 @@ routes, and measured latency.
 | `window` | An aggregate over a time window satisfies the condition |
 | `absence` | No matching event arrives within a timeout |
 | `composite` | Per-source `absence` timers combine under the rule's `AND`/`OR` operator |
+| `sequence` | An ordered pattern of events completes within a bounded window |
 | `scheduled` | A cron expression elapses |
 
 Aggregations available to `window` rules: `count`, `sum`, `mean`, `min`,
 `max`, `stddev`, `delta`, `rate`, and `percentile`, optionally bucketed by a
 `sub_window`.
+
+### Temporal sequences
+
+```yaml
+trigger:
+  type: sequence
+  within: 5m
+sequence:
+  - sensor_type: access_denied
+  - sensor_type: access_denied
+  - sensor_type: access_granted
+without:
+  sensor_type: credential_reset
+```
+
+Ordered, bounded, and non-overlapping: unrelated events between steps are
+ignored, a `without` event cancels a match in flight, and a completed match
+consumes its partial state so a burst yields one alert rather than a cascade.
+Partial-match state is bounded by `within` and is included in snapshots.
 
 ### Alert lifecycle
 

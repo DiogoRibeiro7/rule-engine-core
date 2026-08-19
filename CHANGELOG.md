@@ -29,6 +29,29 @@ Suggested `Upgrade Notes` format:
   Existing configs remain valid.
 ```
 
+## Unreleased
+
+### Added
+
+- A `sequence` trigger matching ordered temporal patterns inside a required
+  `within` bound, with an optional `without` sensor type that cancels a match in
+  flight. Matching is skip-till-next and non-overlapping: unrelated events
+  between steps are ignored, and a completed match consumes the entity's partial
+  state so a burst yields one alert rather than a cascade.
+- Partial-match state is bounded by `within`, carried in engine snapshots, and
+  covered by the rule state fingerprint.
+- `sequence_started`, `sequence_duration`, and `matched_steps` template
+  variables on a completing sequence alert.
+- A `repeated_failure_then_success` example rule and event fixture.
+
+### Upgrade Notes
+
+- `sequence` and `without` are rejected on any trigger type other than
+  `sequence`, and every sensor type they name must be declared in `sources`.
+- The grammar is deliberately restricted: no quantifiers, alternation, nesting,
+  per-step conditions, or unbounded patterns. Write repeated steps out
+  explicitly.
+
 ## 0.3.0 - 2026-08-19
 
 Alert lifecycle and rule lifecycle.

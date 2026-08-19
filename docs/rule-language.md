@@ -38,6 +38,7 @@ Supported top-level trigger types:
 - `window`
 - `absence`
 - `composite`
+- `sequence`
 - `scheduled`
 
 ### `event`
@@ -108,6 +109,73 @@ Rejected fields:
 - `timeout`
 - `cron`
 - `lookback`
+
+### `sequence`
+
+Matches an ordered temporal pattern.
+
+Supported fields:
+
+- `type`
+- `within` (required)
+
+Rejected fields: `duration`, `slide`, `timeout`, `cron`, `lookback`.
+
+The pattern itself is declared at the top level:
+
+```yaml
+trigger:
+  type: sequence
+  within: 5m
+sources:
+  - sensor_type: access_denied
+    entity_id: "*"
+  - sensor_type: access_granted
+    entity_id: "*"
+  - sensor_type: credential_reset
+    entity_id: "*"
+sequence:
+  - sensor_type: access_denied
+  - sensor_type: access_denied
+  - sensor_type: access_granted
+without:
+  sensor_type: credential_reset
+```
+
+`sequence` requires at least two steps. Every `sensor_type` named in `sequence`
+or `without` must also be declared in `sources`. `sequence` and `without` are
+rejected on any other trigger type.
+
+Matching rules:
+
+- **Ordered.** Steps must occur in the declared order.
+- **Bounded.** The whole pattern must complete within `within`, measured from the
+  event that matched the first step. The boundary is inclusive. `within` is
+  required, because bounding the pattern is what keeps partial-match state
+  bounded, and therefore snapshottable.
+- **Skip-till-next.** An event that is not the next expected step is ignored
+  rather than breaking a partial match, so unrelated traffic between steps is
+  harmless.
+- **Non-overlapping.** A completed match consumes all partial state for that
+  entity, so a burst produces one alert rather than a cascade. A new pattern can
+  begin immediately afterwards.
+- **Per entity.** Partial matches are tracked per entity and never cross.
+- **`without` cancels.** An event of the `without` sensor type discards every
+  partial match in flight for that entity. It has no effect when no match is in
+  flight.
+
+A sequence rule can carry `condition` operands, which are evaluated against the
+event that completed the pattern, and an `emit` block, which behaves as it does
+for every other trigger.
+
+The completing alert exposes `sequence_started`, `sequence_duration`, and
+`matched_steps` as template variables.
+
+### Not Supported
+
+The grammar is deliberately restricted. There is no repetition quantifier, no
+alternation, no nesting, no per-step condition, and no unbounded pattern. Write
+repeated steps out explicitly, as the example above does with two denials.
 
 ### `scheduled`
 
@@ -428,6 +496,7 @@ Not supported by the current repo surface:
 - recomputing windows that have already closed when a late event arrives
 - per-source or per-entity watermarks; the watermark is engine-wide
 - alert acknowledgement, which would need an inbound operator API
+- sequence quantifiers, alternation, nesting, or per-step conditions
 
 ## Source Of Truth
 

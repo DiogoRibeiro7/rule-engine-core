@@ -1,0 +1,25 @@
+rule_id: repeated_failure_then_success
+description: Two failed attempts followed by a success within five minutes
+trigger:
+  type: sequence
+  within: 5m
+sources:
+  - sensor_type: access_denied
+    entity_id: "*"
+  - sensor_type: access_granted
+    entity_id: "*"
+  - sensor_type: credential_reset
+    entity_id: "*"
+sequence:
+  - sensor_type: access_denied
+  - sensor_type: access_denied
+  - sensor_type: access_granted
+without:
+  sensor_type: credential_reset
+emit:
+  cooldown: 1h
+actions:
+  - severity: critical
+    message: "Repeated denials then a grant for {{entity_id}}"
+    sinks:
+      - type: stdout

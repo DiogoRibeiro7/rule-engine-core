@@ -1,0 +1,7 @@
+{"entity_id":"account-1","sensor_type":"access_denied","value":1.0,"timestamp_ms":1704067200000}
+{"entity_id":"account-1","sensor_type":"access_denied","value":1.0,"timestamp_ms":1704067260000}
+{"entity_id":"account-1","sensor_type":"access_granted","value":1.0,"timestamp_ms":1704067320000}
+{"entity_id":"account-2","sensor_type":"access_denied","value":1.0,"timestamp_ms":1704067200000}
+{"entity_id":"account-2","sensor_type":"credential_reset","value":1.0,"timestamp_ms":1704067230000}
+{"entity_id":"account-2","sensor_type":"access_denied","value":1.0,"timestamp_ms":1704067260000}
+{"entity_id":"account-2","sensor_type":"access_granted","value":1.0,"timestamp_ms":1704067320000}

@@ -34,7 +34,7 @@ from .window import EntityWindow
 _DURATION_RE = re.compile(r"^(?P<value>\d+)(?P<unit>[smhd])$")
 _TEMPLATE_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
 _LATE_EVENT_POLICIES = {"reject", "drop"}
-_TRIGGER_TYPES = {"event", "window", "absence", "composite", "scheduled"}
+_TRIGGER_TYPES = {"event", "window", "absence", "composite", "scheduled", "sequence"}
 _CONDITION_OPERATORS = {"AND", "OR"}
 _COMPARISON_OPERATORS = {"eq", "ne", "gt", "gte", "lt", "lte"}
 NumericSeries = List[float]
@@ -109,6 +109,9 @@ class CompiledRule:
     cooldown: Optional[timedelta] = None
     repeat_every: Optional[timedelta] = None
     resolve: bool = False
+    within: Optional[timedelta] = None
+    sequence_steps: List[str] = field(default_factory=list)
+    without_sensor_type: Optional[str] = None
 
     @property
     def has_lifecycle(self) -> bool:
@@ -196,6 +199,37 @@ class CompiledRule:
         if trigger_type == "scheduled" and not rule.trigger.cron:
             raise ValueError(f"Scheduled rule {rule.rule_id} requires trigger.cron")
 
+        within = parse_duration(rule.trigger.within)
+        sequence_steps = [step["sensor_type"] for step in rule.sequence]
+        without_sensor_type = rule.without.get("sensor_type") if rule.without else None
+        if trigger_type == "sequence":
+            if within is None:
+                raise ValueError(
+                    f"Sequence rule {rule.rule_id} requires trigger.within; every pattern "
+                    "must be bounded so partial-match state stays bounded"
+                )
+            if len(sequence_steps) < 2:
+                raise ValueError(
+                    f"Sequence rule {rule.rule_id} requires at least two sequence steps"
+                )
+            declared = {source.sensor_type for source in rule.sources}
+            unknown = sorted(set(sequence_steps) - declared)
+            if unknown:
+                raise ValueError(
+                    f"Sequence rule {rule.rule_id} references sensor types not declared in "
+                    f"sources: {', '.join(unknown)}"
+                )
+            if without_sensor_type is not None and without_sensor_type not in declared:
+                raise ValueError(
+                    f"Sequence rule {rule.rule_id} references a 'without' sensor type not "
+                    f"declared in sources: {without_sensor_type}"
+                )
+        elif rule.sequence or rule.without:
+            raise ValueError(
+                f"Rule {rule.rule_id} declares sequence or without but its trigger type is "
+                f"'{trigger_type}'; those fields require trigger type 'sequence'"
+            )
+
         emit = rule.emit
         cooldown = parse_duration(emit.cooldown) if emit else None
         repeat_every = parse_duration(emit.repeat_every) if emit else None
@@ -225,6 +259,9 @@ class CompiledRule:
             cooldown=cooldown,
             repeat_every=repeat_every,
             resolve=resolve,
+            within=within,
+            sequence_steps=sequence_steps,
+            without_sensor_type=without_sensor_type,
         )
 
     def state_fingerprint(self) -> str:
@@ -248,6 +285,9 @@ class CompiledRule:
             },
             "cron": self.cron,
             "lookback": _seconds_or_none(self.lookback),
+            "within": _seconds_or_none(self.within),
+            "sequence_steps": list(self.sequence_steps),
+            "without_sensor_type": self.without_sensor_type,
         }
         canonical = json.dumps(structure, sort_keys=True, separators=(",", ":"))
         return sha256(canonical.encode("utf-8")).hexdigest()[:16]
@@ -284,6 +324,7 @@ class RuleState:
     next_window_end: Optional[datetime] = None
     next_schedule_fire: Optional[datetime] = None
     last_schedule_fire: Optional[datetime] = None
+    partial_matches: List[Tuple[datetime, int]] = field(default_factory=list)
     episode_started: Optional[datetime] = None
     last_emit: Optional[datetime] = None
     next_repeat_fire: Optional[datetime] = None
@@ -331,6 +372,9 @@ def _serialize_rule_state(state: "RuleState") -> Dict[str, Any]:
         "next_window_end": _iso_or_none(state.next_window_end),
         "next_schedule_fire": _iso_or_none(state.next_schedule_fire),
         "last_schedule_fire": _iso_or_none(state.last_schedule_fire),
+        "partial_matches": [
+            [started.isoformat(), step] for started, step in state.partial_matches
+        ],
         "episode_started": _iso_or_none(state.episode_started),
         "last_emit": _iso_or_none(state.last_emit),
         "next_repeat_fire": _iso_or_none(state.next_repeat_fire),
@@ -358,6 +402,10 @@ def _deserialize_rule_state(payload: Dict[str, Any]) -> "RuleState":
         next_window_end=_datetime_or_none(payload.get("next_window_end")),
         next_schedule_fire=_datetime_or_none(payload.get("next_schedule_fire")),
         last_schedule_fire=_datetime_or_none(payload.get("last_schedule_fire")),
+        partial_matches=[
+            (_normalize_datetime(datetime.fromisoformat(started)), int(step))
+            for started, step in payload.get("partial_matches", [])
+        ],
         episode_started=_datetime_or_none(payload.get("episode_started")),
         last_emit=_datetime_or_none(payload.get("last_emit")),
         next_repeat_fire=_datetime_or_none(payload.get("next_repeat_fire")),
@@ -430,6 +478,13 @@ def _validate_trigger_fields(rule: DeclarativeRule) -> None:
             "lookback": rule.trigger.lookback,
         },
         "composite": {
+            "duration": rule.trigger.duration,
+            "slide": rule.trigger.slide,
+            "timeout": rule.trigger.timeout,
+            "cron": rule.trigger.cron,
+            "lookback": rule.trigger.lookback,
+        },
+        "sequence": {
             "duration": rule.trigger.duration,
             "slide": rule.trigger.slide,
             "timeout": rule.trigger.timeout,
@@ -751,6 +806,8 @@ class CompiledEngine:
                 state.last_seen[event.sensor_type] = timestamp
                 if rule.trigger_type == "event":
                     emitted.extend(self._evaluate_event_rule(rule, event))
+                elif rule.trigger_type == "sequence":
+                    emitted.extend(self._advance_sequence(rule, state, event))
                 elif rule.trigger_type == "absence":
                     # The source is reporting again, so any open episode is over.
                     state.absence_fired = False
@@ -1209,6 +1266,77 @@ class CompiledEngine:
                         state.last_schedule_fire = fire_time
                         state.next_schedule_fire = _next_cron_fire(fire_time, rule.cron or "")
         return emitted
+
+    def _advance_sequence(
+        self, rule: CompiledRule, state: RuleState, event: SensorEvent
+    ) -> List[EmittedAlert]:
+        """Advance partial matches for a sequence rule against one event.
+
+        Matching is skip-till-next: an event that is not the next expected step
+        is ignored rather than breaking a partial match. The ``without`` sensor
+        type is the exception, cancelling every partial match in flight.
+
+        A completed match consumes all partial state for the entity, so matches
+        never overlap and a burst cannot produce a cascade of alerts.
+        """
+        within = rule.within or timedelta(0)
+        cutoff = event.timestamp - within
+        # Expiry is what keeps partial-match state bounded, and therefore
+        # bounded in a snapshot as well.
+        state.partial_matches = [
+            (started, step) for started, step in state.partial_matches if started >= cutoff
+        ]
+
+        if event.sensor_type == rule.without_sensor_type:
+            state.partial_matches = []
+            return []
+
+        steps = rule.sequence_steps
+        advanced: List[Tuple[datetime, int]] = []
+        completed_start: Optional[datetime] = None
+
+        for started, step in state.partial_matches:
+            if steps[step] == event.sensor_type:
+                if step + 1 == len(steps):
+                    if completed_start is None or started < completed_start:
+                        completed_start = started
+                else:
+                    advanced.append((started, step + 1))
+            else:
+                advanced.append((started, step))
+
+        if steps[0] == event.sensor_type:
+            advanced.append((event.timestamp, 1))
+
+        if completed_start is None:
+            state.partial_matches = advanced
+            return []
+
+        state.partial_matches = []
+        values = {
+            "entity_id": event.entity_id,
+            "rule_id": rule.rule_id,
+            "sensor_type": event.sensor_type,
+            "value": event.value,
+            "timestamp_ms": event.timestamp_ms,
+            "sequence_started": completed_start.isoformat(),
+            "sequence_duration": str(event.timestamp - completed_start),
+            "matched_steps": len(steps),
+        }
+        if rule.operands and not _evaluate_operands(
+            rule.condition_operator, rule.operands, values
+        ):
+            return []
+        label = self._lifecycle_label(rule, event.entity_id, event.timestamp)
+        if label is None:
+            return []
+        context = RuleContext(
+            entity_id=event.entity_id,
+            rule_id=rule.rule_id,
+            timestamp=event.timestamp,
+            duration=event.timestamp - completed_start,
+        )
+        return self._build_alerts(rule, context, values, lifecycle=label)
 
     def _evaluate_event_rule(self, rule: CompiledRule, event: SensorEvent) -> List[EmittedAlert]:
         values = {

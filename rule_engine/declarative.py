@@ -64,14 +64,31 @@ _DECLARATIVE_RULE_SCHEMA: Dict[str, Any] = {
             "properties": {
                 "type": {
                     "type": "string",
-                    "enum": ["event", "window", "absence", "composite", "scheduled"],
+                    "enum": ["event", "window", "absence", "composite", "scheduled", "sequence"],
                 },
                 "duration": {"type": "string"},
                 "slide": {"type": "string"},
                 "timeout": {"type": "string"},
                 "cron": {"type": "string"},
                 "lookback": {"type": "string"},
+                "within": {"type": "string"},
             },
+            "additionalProperties": False,
+        },
+        "sequence": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+                "type": "object",
+                "required": ["sensor_type"],
+                "properties": {"sensor_type": {"type": "string"}},
+                "additionalProperties": False,
+            },
+        },
+        "without": {
+            "type": "object",
+            "required": ["sensor_type"],
+            "properties": {"sensor_type": {"type": "string"}},
             "additionalProperties": False,
         },
         "sources": {
@@ -171,6 +188,7 @@ class Trigger:
     timeout: Optional[str] = None
     cron: Optional[str] = None
     lookback: Optional[str] = None
+    within: Optional[str] = None
 
 
 @dataclass
@@ -213,6 +231,8 @@ class DeclarativeRule:
     aggregations: List[Dict[str, Any]] = field(default_factory=list)
     allowed_lateness: Optional[str] = None
     emit: Optional[Emit] = None
+    sequence: List[Dict[str, Any]] = field(default_factory=list)
+    without: Optional[Dict[str, Any]] = None
 
     @property
     def functional_primitive(self) -> str:
@@ -379,6 +399,7 @@ def _load_trigger(data: Dict[str, Any]) -> Trigger:
         timeout=data.get("timeout"),
         cron=data.get("cron"),
         lookback=data.get("lookback"),
+        within=data.get("within"),
     )
 
 
@@ -473,6 +494,8 @@ def load_rule_yaml(text: str) -> DeclarativeRule:
         aggregations=document.get("aggregations", []),
         allowed_lateness=document.get("allowed_lateness"),
         emit=_load_emit(document.get("emit")),
+        sequence=document.get("sequence", []),
+        without=document.get("without"),
     )
 
 

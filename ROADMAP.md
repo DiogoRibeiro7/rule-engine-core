@@ -33,7 +33,7 @@ correctness fixes                 [done]
     → checkpoint / recovery        [done]
       → suppression + alert lifecycle [done]
         → rule versioning + hot reload [done]
-          → temporal sequences
+          → temporal sequences      [done]
             → explainability
               → simulation / backtesting
                 → partitioned execution
@@ -207,38 +207,42 @@ behaviour is pinned by test so it cannot drift silently.
 
 ---
 
-### Stage 5 — Temporal sequences and correlation
+### Stage 5 — Temporal sequences and correlation — complete
 
-**Goal.** The largest single increase in expressive power. Support ordered
-temporal patterns:
+**Goal.** The largest single increase in expressive power: ordered temporal
+patterns, and negated correlation.
 
-$$A \rightarrow B \rightarrow C \quad \text{within } 10\,\text{min}$$
-
-and negated correlations:
-
-$$A \land B \quad \text{without } C \text{ for } 5\,\text{min}$$
-
-**Shape.** A deliberately restricted grammar — not a general CEP language:
+**Delivered.** A `sequence` trigger with a required `within` bound:
 
 ```yaml
+trigger:
+  type: sequence
+  within: 5m
 sequence:
-  - event: login_failure
-  - event: login_failure
-  - event: login_success
-within: 5m
+  - sensor_type: access_denied
+  - sensor_type: access_denied
+  - sensor_type: access_granted
+without:
+  sensor_type: credential_reset
 ```
 
-**Constraints.** The restriction is the design. No unbounded backtracking, no
-regex-style quantifiers, no user-defined expression language. Every pattern must
-have a bounded window, so partial-match state stays bounded per entity — which
-matters because that state has to be snapshottable under Stage 2.
+- Ordered matching with skip-till-next semantics: an event that is not the next
+  expected step is ignored rather than breaking a partial match.
+- `without` cancels every partial match in flight for that entity, covering the
+  negated form.
+- Matches are non-overlapping. A completed match consumes the entity's partial
+  state, so a burst produces one alert rather than a cascade.
+- Partial matches expire against `within`, which is why the bound is required
+  rather than optional: it is what keeps state bounded per entity, and therefore
+  snapshottable. Partial matches are carried in snapshots and covered by the
+  state fingerprint.
+- Sequence rules compose with `emit`, so a matched pattern can be throttled,
+  repeated, and resolved like any other alert.
 
-`docs/rule-language.md` is the contract and must be extended in the same change
-set.
-
-**Done when.** Sequence matching is correct under out-of-order arrival within
-`allowed_lateness`, partial-match state is bounded and snapshottable, and the
-unsupported edges are documented as explicitly as the supported ones.
+**Restrictions are the design.** No quantifiers, no alternation, no nesting, no
+per-step conditions, no unbounded patterns. Repeated steps are written out
+explicitly. `docs/rule-language.md` states each of these as an explicit
+non-feature rather than leaving them to be discovered.
 
 ---
 

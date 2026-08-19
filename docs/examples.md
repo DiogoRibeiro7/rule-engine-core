@@ -115,3 +115,16 @@ python -m rule_engine.runner sample_rules/examples/daily_usage_review.yaml --eve
   be used in tests, demos, and documentation.
 - The webhook target above is intentionally non-routable documentation-only
   data.
+
+## Repeated Denials Then A Grant
+
+An ordered pattern: two denials followed by a grant within five minutes, unless a
+credential reset intervenes.
+
+```bash
+python -m rule_engine.runner   sample_rules/examples/repeated_failure_then_success.yaml   --events sample_data/examples/repeated_failure_then_success.ndjson
+```
+
+`account-1` matches. `account-2` sees the same three events but also a
+`credential_reset` between them, which cancels the match in flight, so it emits
+nothing.
