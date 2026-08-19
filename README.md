@@ -93,9 +93,14 @@ before evaluating it; `advance_to()` refuses an earlier target. A rule can
 declare `allowed_lateness` to tolerate events arriving behind the watermark,
 which are folded into rule state in place without rewinding time. Anything
 later than that is governed by `EngineConfig.late_event_policy` — `reject`
-(default) or `drop`. `CompiledEngine.watermark` exposes the current position and
-`late_event_metrics()` reports what arrived late. See `docs/rule-language.md`
-for the exact semantics.
+(default) or `drop`.
+
+Lateness is measured per entity, so one entity running ahead cannot make
+another's in-order events look late; timer progress stays global, which is what
+keeps an absence alert firing for an entity that has gone silent. With
+`recompute_late_windows`, a tolerated late event also reopens windows that have
+already closed, retracting an alert whose window no longer holds. See
+`docs/rule-language.md` for the exact semantics.
 
 **3. Deliver** — `rule_engine/sinks.py`
 

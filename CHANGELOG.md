@@ -29,6 +29,41 @@ Suggested `Upgrade Notes` format:
   Existing configs remain valid.
 ```
 
+## Unreleased
+
+### Added
+
+- `EngineConfig.recompute_late_windows`, reopening windows that have already
+  closed when a tolerated late event falls into them. A window that no longer
+  holds is retracted under the original episode's `correlation_id`; one that now
+  holds fires late; an unchanged verdict emits nothing. Closed-window verdicts
+  are retained only for the window duration plus `allowed_lateness`.
+- A `retracted` alert lifecycle, and a `retractions` count in simulation
+  statistics.
+- `CompiledEngine.entity_watermarks()` reporting how far each entity has
+  progressed in event time.
+
+### Changed
+
+- Lateness is now measured against an entity's own progress rather than the
+  engine clock, so an entity running ahead no longer makes another entity's
+  in-order events look late. An explicit `advance_to()` call and
+  `EngineConfig.initial_watermark` still raise the bar for every entity, because
+  both assert that time has moved.
+- Events that are out of order only across entities are no longer counted in
+  `late_event_metrics()`, since they are not late for the entity that sent them.
+
+### Upgrade Notes
+
+- Events previously rejected because an unrelated entity had run ahead are now
+  accepted and folded into rule state in place. Events out of order against
+  their own entity still raise as before.
+- Timer progress remains engine-wide. Per-entity timers would mean an entity
+  that goes silent never advances its own clock, so its absence alert would
+  never fire.
+- `recompute_late_windows` defaults to `false`, so window behaviour is unchanged
+  unless it is enabled.
+
 ## 0.4.0 - 2026-08-19
 
 Temporal patterns, declarative partitioning, and inspection.

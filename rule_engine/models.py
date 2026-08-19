@@ -225,6 +225,7 @@ class RuleSimulationStats:
     fires: int = 0
     repeats: int = 0
     resolutions: int = 0
+    retractions: int = 0
     suppressed: int = 0
     entities: List[str] = field(default_factory=list)
     first_alert: Optional[str] = None
@@ -251,6 +252,7 @@ class RuleSimulationStats:
             "fires": self.fires,
             "repeats": self.repeats,
             "resolutions": self.resolutions,
+            "retractions": self.retractions,
             "suppressed": self.suppressed,
             "entity_count": self.entity_count,
             "entities": list(self.entities),
@@ -409,6 +411,8 @@ class EngineSnapshot:
     rule_fingerprints: Dict[str, str] = field(default_factory=dict)
     late_event_metrics: Dict[str, Any] = field(default_factory=dict)
     suppressed_counts: Dict[str, int] = field(default_factory=dict)
+    entity_watermarks: Dict[str, str] = field(default_factory=dict)
+    floor_watermark: Optional[str] = None
     version: int = SNAPSHOT_VERSION
 
     def to_dict(self) -> Dict[str, Any]:
@@ -419,6 +423,8 @@ class EngineSnapshot:
             "entities": deepcopy(self.entities),
             "late_event_metrics": deepcopy(self.late_event_metrics),
             "suppressed_counts": dict(self.suppressed_counts),
+            "entity_watermarks": dict(self.entity_watermarks),
+            "floor_watermark": self.floor_watermark,
         }
 
     def to_json(self, indent: Optional[int] = None) -> str:
@@ -438,6 +444,8 @@ class EngineSnapshot:
             rule_fingerprints=dict(payload.get("rule_fingerprints", {})),
             late_event_metrics=deepcopy(payload.get("late_event_metrics", {})),
             suppressed_counts=dict(payload.get("suppressed_counts", {})),
+            entity_watermarks=dict(payload.get("entity_watermarks", {})),
+            floor_watermark=payload.get("floor_watermark"),
             version=version,
         )
 
@@ -476,3 +484,4 @@ class EngineConfig:
     initial_watermark: Optional[datetime] = None
     schedule_start: Optional[datetime] = None
     late_event_policy: str = "reject"
+    recompute_late_windows: bool = False

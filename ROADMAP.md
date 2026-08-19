@@ -29,7 +29,7 @@ expressiveness before tooling that explains it.
 
 ```text
 correctness fixes                 [done]
-  → late-event semantics          [partial]
+  → late-event semantics          [done]
     → checkpoint / recovery        [done]
       → suppression + alert lifecycle [done]
         → rule versioning + hot reload [done]
@@ -63,43 +63,46 @@ Any further findings from correctness review belong here before Stage 1 starts.
 
 ---
 
-### Stage 1 — Late-event and out-of-order handling — partially complete
+### Stage 1 — Late-event and out-of-order handling — complete
 
 **Goal.** Make the engine honest about the distinction that defines stream
 processing: event time is not processing time.
 
-Stage 0 made the ordering assumption explicit by rejecting violations. Stage 1
-replaces blanket rejection with declared tolerance.
-
 **Delivered.**
 
-- `allowed_lateness`, a per-rule duration, compared inclusively. It accepts
-  `0s` explicitly, which required `parse_duration` to grow an `allow_zero` flag.
+- `allowed_lateness`, a per-rule duration compared inclusively, accepting `0s`
+  explicitly.
 - Tolerated late events are folded into rule state in place: the watermark never
-  moves backward, no timers re-fire, `event` triggers are evaluated, window and
-  scheduled buffers receive the event in timestamp order, and `last_seen` only
-  ever advances.
-- `EngineConfig.late_event_policy` — `reject` (default) or `drop` — governing
-  events later than any rule tolerates. Engine-level rather than per-rule,
-  because it decides the fate of an event that no rule can use.
-- `CompiledEngine.late_event_metrics()`, a typed `LateEventMetrics` carrying
-  totals, a per-rule breakdown, and structured exports.
+  moves backward, no timers re-fire, window buffers take the event in timestamp
+  order, and `last_seen` only ever advances.
+- `EngineConfig.late_event_policy` — `reject` (default) or `drop` — for events
+  later than any rule tolerates, with `late_event_metrics()` reporting totals and
+  a per-rule breakdown.
+- `EngineConfig.recompute_late_windows` reopens windows that have already closed.
+  A window that no longer holds is retracted under the original episode's
+  correlation id; one that now holds fires late; an unchanged verdict emits
+  nothing. Verdicts are retained only for the window duration plus
+  `allowed_lateness`, so the record stays bounded and snapshottable.
+- Lateness is measured against each entity's own progress, so an entity running
+  ahead cannot make another entity's in-order events look late.
+  `entity_watermarks()` reports the per-entity positions.
 
-**Remaining.**
+**Two constraints the implementation settled.**
 
-- **`recompute`.** Reopening a window that has already closed means retracting
-  the alert it emitted, so this is blocked on the Stage 3 lifecycle work. The
-  policy value is deliberately rejected rather than accepted and silently
-  degraded to plain acceptance.
-- **Per-source and per-entity watermarks.** The watermark is still engine-wide.
-  Splitting it changes when every timer fires, making it a timer-machinery
-  refactor rather than an extension of the lateness work, so it is better done
-  on its own. Until then, one lagging entity holds the watermark back for all
-  of them.
+*Timer progress stays global, deliberately.* Per-entity timers sound like the
+obvious completion of per-entity watermarks, but an entity that goes silent never
+advances its own clock — so its absence alert would never fire, which is the one
+thing an absence rule exists to do. Lateness is per entity; time is not.
 
-**Done when.** Shuffled arrival converges with in-order replay for window rules
-as well as event rules — which is exactly what `recompute` buys — and
-watermarks are tracked per entity.
+*Explicit clock advancement is not the same as traffic.* `advance_to()` and
+`initial_watermark` raise the bar for every entity, because both assert that time
+has moved. Another entity's events do not. That distinction is what makes
+per-entity lateness safe rather than a way to smuggle stale data in.
+
+**Not carried further.** Per-*source* watermarks are not tracked; lateness is per
+entity, not per sensor type. Recompute applies to window rules only, since event
+rules already evaluate a tolerated late event directly and absence and composite
+state only ever advances.
 
 ---
 

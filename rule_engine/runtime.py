@@ -367,6 +367,7 @@ class RuleState:
     next_schedule_fire: Optional[datetime] = None
     last_schedule_fire: Optional[datetime] = None
     partial_matches: List[Tuple[datetime, int]] = field(default_factory=list)
+    closed_windows: Dict[str, bool] = field(default_factory=dict)
     episode_started: Optional[datetime] = None
     last_emit: Optional[datetime] = None
     next_repeat_fire: Optional[datetime] = None
@@ -467,6 +468,8 @@ def _build_simulation_report(
             entry.repeats += 1
         elif lifecycle == "resolved":
             entry.resolutions += 1
+        elif lifecycle == "retracted":
+            entry.retractions += 1
 
         stamp = alert.timestamp.isoformat()
         if entry.first_alert is None or stamp < entry.first_alert:
@@ -582,6 +585,7 @@ def _serialize_rule_state(state: "RuleState") -> Dict[str, Any]:
         "next_window_end": _iso_or_none(state.next_window_end),
         "next_schedule_fire": _iso_or_none(state.next_schedule_fire),
         "last_schedule_fire": _iso_or_none(state.last_schedule_fire),
+        "closed_windows": dict(state.closed_windows),
         "partial_matches": [
             [started.isoformat(), step] for started, step in state.partial_matches
         ],
@@ -612,6 +616,7 @@ def _deserialize_rule_state(payload: Dict[str, Any]) -> "RuleState":
         next_window_end=_datetime_or_none(payload.get("next_window_end")),
         next_schedule_fire=_datetime_or_none(payload.get("next_schedule_fire")),
         last_schedule_fire=_datetime_or_none(payload.get("last_schedule_fire")),
+        closed_windows=dict(payload.get("closed_windows", {})),
         partial_matches=[
             (_normalize_datetime(datetime.fromisoformat(started)), int(step))
             for started, step in payload.get("partial_matches", [])
@@ -951,6 +956,12 @@ class CompiledEngine:
         )
         self._late_event_metrics = LateEventMetrics()
         self._suppressed_counts: Dict[str, int] = {}
+        self._entity_watermarks: Dict[str, datetime] = {}
+        self._floor: Optional[datetime] = (
+            _normalize_datetime(self.config.initial_watermark)
+            if self.config.initial_watermark is not None
+            else None
+        )
         # rule_id -> the previous definition, kept alive while entities drain
         self._draining_rules: Dict[str, CompiledRule] = {}
         self._draining_entities: Dict[str, Set[str]] = {}
@@ -1000,8 +1011,17 @@ class CompiledEngine:
     def process_event(self, event: SensorEvent) -> List[EmittedAlert]:
         timestamp = event.timestamp
         if self._watermark is not None and timestamp < self._watermark:
-            return self._handle_late_event(event, self._watermark - timestamp)
-        emitted = self.advance_to(timestamp)
+            # Behind the engine clock, so it still has to be folded in rather
+            # than rewinding time. Whether it counts as *late* is judged against
+            # this entity's own progress, so a fast entity running ahead does
+            # not make another entity's in-order events look late.
+            reference = self._entity_reference(event.entity_id)
+            lateness = timestamp - timestamp  # zero of the right type
+            if reference is not None and timestamp < reference:
+                lateness = reference - timestamp
+            return self._handle_late_event(event, lateness)
+        emitted = self._advance_timers_to(timestamp)
+        self._note_entity_watermark(event.entity_id, timestamp)
 
         for declared in self.rules:
             if not declared.applies_to_entity(event.entity_id):
@@ -1212,6 +1232,11 @@ class CompiledEngine:
             rule_fingerprints={rule.rule_id: rule.state_fingerprint() for rule in self.rules},
             late_event_metrics=self._late_event_metrics.to_dict(),
             suppressed_counts=dict(self._suppressed_counts),
+            floor_watermark=_iso_or_none(self._floor),
+            entity_watermarks={
+                entity_id: moment.isoformat()
+                for entity_id, moment in self._entity_watermarks.items()
+            },
         )
 
     @classmethod
@@ -1260,6 +1285,11 @@ class CompiledEngine:
             self._entities[partition] = restored
 
         self._suppressed_counts = dict(snapshot.suppressed_counts)
+        self._entity_watermarks = {
+            entity_id: _normalize_datetime(datetime.fromisoformat(moment))
+            for entity_id, moment in snapshot.entity_watermarks.items()
+        }
+        self._floor = _datetime_or_none(snapshot.floor_watermark)
         metrics = snapshot.late_event_metrics
         self._late_event_metrics = LateEventMetrics(
             total=metrics.get("total", 0),
@@ -1278,6 +1308,24 @@ class CompiledEngine:
         """Counts of events seen behind the watermark since the engine was built."""
         return self._late_event_metrics
 
+    def _entity_reference(self, entity_id: str) -> Optional[datetime]:
+        """How far this entity has progressed, or the configured floor."""
+        seen = self._entity_watermarks.get(entity_id)
+        if seen is None:
+            return self._floor
+        if self._floor is not None and self._floor > seen:
+            return self._floor
+        return seen
+
+    def _note_entity_watermark(self, entity_id: str, timestamp: datetime) -> None:
+        seen = self._entity_watermarks.get(entity_id)
+        if seen is None or timestamp > seen:
+            self._entity_watermarks[entity_id] = timestamp
+
+    def entity_watermarks(self) -> Dict[str, datetime]:
+        """How far each entity has progressed in event time."""
+        return dict(self._entity_watermarks)
+
     def _handle_late_event(self, event: SensorEvent, lateness: timedelta) -> List[EmittedAlert]:
         """Route an event that arrived behind the watermark.
 
@@ -1286,7 +1334,8 @@ class CompiledEngine:
         event is folded into rule state in place instead.
         """
         metrics = self._late_event_metrics
-        metrics.total += 1
+        if lateness > timedelta(0):
+            metrics.total += 1
 
         if lateness > self._max_allowed_lateness:
             if self.config.late_event_policy == "reject":
@@ -1311,18 +1360,28 @@ class CompiledEngine:
             if partition is None:
                 continue
             if lateness > rule.allowed_lateness:
-                metrics.per_rule_dropped[rule.rule_id] = (
-                    metrics.per_rule_dropped.get(rule.rule_id, 0) + 1
-                )
+                if lateness > timedelta(0):
+                    metrics.per_rule_dropped[rule.rule_id] = (
+                        metrics.per_rule_dropped.get(rule.rule_id, 0) + 1
+                    )
                 continue
 
             accepted_by_any = True
-            metrics.per_rule_accepted[rule.rule_id] = (
-                metrics.per_rule_accepted.get(rule.rule_id, 0) + 1
-            )
+            if lateness > timedelta(0):
+                metrics.per_rule_accepted[rule.rule_id] = (
+                    metrics.per_rule_accepted.get(rule.rule_id, 0) + 1
+                )
             state = self._ensure_state(partition, rule)
             if rule.trigger_type in {"window", "scheduled"}:
                 _insert_event_in_order(state.buffered_events, event)
+                if (
+                    rule.trigger_type == "window"
+                    and self.config.recompute_late_windows
+                    and rule.matches_event(event)
+                ):
+                    emitted.extend(
+                        self._recompute_closed_windows(rule, partition, state, event)
+                    )
             if rule.matches_event(event):
                 # last_seen tracks the newest observation, so a late event must
                 # never drag it backward.
@@ -1332,13 +1391,27 @@ class CompiledEngine:
                 if rule.trigger_type == "event":
                     emitted.extend(self._evaluate_event_rule(rule, event, partition))
 
-        if accepted_by_any:
-            metrics.accepted += 1
-        else:
-            metrics.dropped += 1
+        if lateness > timedelta(0):
+            if accepted_by_any:
+                metrics.accepted += 1
+            else:
+                metrics.dropped += 1
         return emitted
 
     def advance_to(self, target: datetime) -> List[EmittedAlert]:
+        """Advance the engine clock, firing any timers that fall due.
+
+        This is an explicit statement that time has moved, so it raises the bar
+        for every entity: an event arriving before this point afterwards is late
+        for all of them. Events arriving from other entities do not do this.
+        """
+        target = _normalize_datetime(target)
+        emitted = self._advance_timers_to(target)
+        if self._floor is None or target > self._floor:
+            self._floor = target
+        return emitted
+
+    def _advance_timers_to(self, target: datetime) -> List[EmittedAlert]:
         target = _normalize_datetime(target)
         emitted: List[EmittedAlert] = []
         if self._watermark is None:
@@ -1978,6 +2051,80 @@ class CompiledEngine:
         )
         return self._build_alerts(rule, context, values, lifecycle=label)
 
+    def _record_closed_window(
+        self, rule: CompiledRule, state: RuleState, window_end: datetime, satisfied: bool
+    ) -> None:
+        """Remember a closed window's verdict so a late event can reopen it.
+
+        Only kept for as long as a late event could still arrive for it, so the
+        record stays bounded and snapshottable.
+        """
+        if not self.config.recompute_late_windows:
+            return
+        state.closed_windows[window_end.isoformat()] = satisfied
+        horizon = (rule.duration or timedelta(0)) + rule.allowed_lateness
+        cutoff = window_end - horizon
+        state.closed_windows = {
+            stamp: verdict
+            for stamp, verdict in state.closed_windows.items()
+            if _normalize_datetime(datetime.fromisoformat(stamp)) >= cutoff
+        }
+
+    def _recompute_closed_windows(
+        self, rule: CompiledRule, partition: str, state: RuleState, event: SensorEvent
+    ) -> List[EmittedAlert]:
+        """Re-evaluate closed windows a late event falls into, and reconcile them.
+
+        A window that no longer holds is retracted; one that now holds but did
+        not before fires late. A window whose verdict is unchanged emits
+        nothing, so a late event that changes nothing stays silent.
+        """
+        duration = rule.duration or timedelta(0)
+        emitted: List[EmittedAlert] = []
+        affected = sorted(
+            stamp
+            for stamp in state.closed_windows
+            if _normalize_datetime(datetime.fromisoformat(stamp)) - duration
+            <= event.timestamp
+            <= _normalize_datetime(datetime.fromisoformat(stamp))
+        )
+        for stamp in affected:
+            window_end = _normalize_datetime(datetime.fromisoformat(stamp))
+            start = window_end - duration
+            events = [
+                buffered
+                for buffered in state.buffered_events
+                if start <= buffered.timestamp <= window_end
+                and buffered.sensor_type in rule.sensor_types
+            ]
+            window = EntityWindow(
+                entity_id=partition, start=start, end=window_end, events=events
+            )
+            values = self._window_values(rule, window)
+            satisfied = _evaluate_operands(rule.condition_operator, rule.operands, values)
+            previously = state.closed_windows[stamp]
+            if satisfied == previously:
+                continue
+            state.closed_windows[stamp] = satisfied
+            context = RuleContext(
+                entity_id=partition,
+                rule_id=rule.rule_id,
+                timestamp=window_end,
+                duration=duration,
+            )
+            if satisfied:
+                label = self._lifecycle_label(rule, partition, window_end)
+                if label is None:
+                    continue
+                emitted.extend(self._build_alerts(rule, context, values, lifecycle=label))
+            else:
+                emitted.extend(
+                    self._build_alerts(rule, context, values, lifecycle="retracted")
+                )
+                episode_state = self._entities[partition][rule.rule_id]
+                self._close_episode(episode_state)
+        return emitted
+
     def _emit_window(
         self, rule: CompiledRule, entity_id: str, state: RuleState, fire_time: datetime
     ) -> List[EmittedAlert]:
@@ -1990,7 +2137,9 @@ class CompiledEngine:
         ]
         window = EntityWindow(entity_id=entity_id, start=start, end=fire_time, events=events)
         values = self._window_values(rule, window)
-        if not _evaluate_operands(rule.condition_operator, rule.operands, values):
+        satisfied = _evaluate_operands(rule.condition_operator, rule.operands, values)
+        self._record_closed_window(rule, state, fire_time, satisfied)
+        if not satisfied:
             return self._resolve_episode(rule, entity_id, fire_time)
         label = self._lifecycle_label(rule, entity_id, fire_time)
         if label is None:

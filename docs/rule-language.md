@@ -314,6 +314,17 @@ in range.
   engine-level rather than per-rule because it decides the fate of an event no
   rule can use. `reject` (the default) raises; `drop` discards and counts it.
 
+Lateness is measured against the entity's own progress, not the engine clock. An
+entity running ahead therefore cannot make another entity's in-order events look
+late. An explicit `advance_to()` call, and `EngineConfig.initial_watermark`, do
+raise the bar for every entity, because both are statements that time has moved
+rather than observations about one entity. `CompiledEngine.entity_watermarks()`
+reports how far each entity has progressed.
+
+Timer progress stays global. It has to: an entity that goes silent never
+advances its own clock, so per-entity timers would mean its absence alert never
+fires — which is the one thing an absence rule exists to do.
+
 Because tolerance is per-rule, one event can be within range for one rule and
 beyond it for another. The engine compares against the largest declared
 tolerance, then each rule applies its own; `CompiledEngine.late_event_metrics()`
@@ -322,12 +333,25 @@ reports both the totals and the per-rule breakdown.
 `replay()` sorts a batch before evaluating it, so lateness only arises when
 feeding `process_event` directly or replaying a later batch first.
 
-### Not Yet Handled
+### Recomputing Closed Windows
 
-A tolerated late event does **not** recompute a window that has already closed
-and emitted. Reopening a closed window requires retracting the alert it already
-produced, which needs the alert lifecycle work tracked in `ROADMAP.md`. Today a
-late event only affects windows still open when it arrives.
+By default a tolerated late event only affects windows still open when it
+arrives. Setting `EngineConfig.recompute_late_windows` reopens windows that have
+already closed:
+
+- a window that no longer holds is **retracted**, emitting a `retracted`
+  lifecycle that carries the original episode's `correlation_id`;
+- a window that now holds but did not before **fires late**;
+- a window whose verdict is unchanged emits nothing, so a late event that moves
+  a value without crossing the threshold stays silent.
+
+Only `window` rules are recomputed. An `event` rule already evaluates a
+tolerated late event directly, and `absence` and `composite` state only ever
+advances, so neither has a closed decision to revisit.
+
+Closed-window verdicts are retained only for as long as a late event could still
+arrive for them — the window duration plus `allowed_lateness` — so the record
+stays bounded and travels in snapshots.
 
 ## Duration Format
 
@@ -543,9 +567,8 @@ Not supported by the current repo surface:
 - sink types beyond the implemented set
 - live streaming ingestion
 - workflow orchestration or stateful infrastructure integrations
-- recomputing windows that have already closed when a late event arrives
-- per-source or per-entity watermarks; the watermark is engine-wide, so
-  partitions share one clock
+- per-source watermarks; lateness is tracked per entity, not per sensor type
+- per-entity timer progress; timers fire on one engine-wide clock
 - parallel or distributed execution across partitions
 - alert acknowledgement, which would need an inbound operator API
 - sequence quantifiers, alternation, nesting, or per-step conditions
