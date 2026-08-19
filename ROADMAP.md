@@ -34,7 +34,7 @@ correctness fixes                 [done]
       → suppression + alert lifecycle [done]
         → rule versioning + hot reload [done]
           → temporal sequences      [done]
-            → explainability
+            → explainability        [done]
               → simulation / backtesting
                 → partitioned execution
 ```
@@ -246,44 +246,32 @@ non-feature rather than leaving them to be discovered.
 
 ---
 
-### Stage 6 — Explainability and rule tracing
+### Stage 6 — Explainability and rule tracing — complete
 
 **Goal.** Declarative systems are hard to debug precisely because the logic is
-data. An explain mode fits this repository especially well and makes it far
-easier to demonstrate.
+data.
 
-**Shape.**
+**Delivered.** `engine.explain(event)` returns a typed `ExplainResult`: one
+`RuleExplanation` per rule, each a list of `ExplainCheck` predicates with the
+value actually observed.
 
-```python
-result = engine.explain(event)
-```
+- **The non-firing case is covered properly.** `first_failure()` returns the
+  check that stopped the rule, with its observed value, which is the half that
+  is genuinely useful and genuinely harder.
+- Every trigger family reports something meaningful: a failing operand, a
+  sequence that was ignored, advanced, or cancelled, an absence timer with the
+  time left before it fires, a composite's per-source silence, a window's
+  aggregate over the current buffer.
+- Suppression is explained rather than silently indistinguishable from
+  not-matching: a suppressed rule reports how long its cooldown has left.
+- `to_dict()`/`to_json()` are the primary output and `render()` is one view over
+  the same structure, consistent with the other typed results.
 
-```text
-rule: temperature-spike
-matched filters:
-    source == sensor-a        ✓
-    temperature > 40          ✓
-aggregation:
-    mean(last 5m) = 43.2
-    required > 42             ✓
-suppression:
-    cooldown expired          ✓
-outcome:
-    alert emitted
-```
-
-**The hard requirement.** Explaining why a rule *did not* fire is the valuable
-half and the harder half. A non-firing rule must report the first predicate that
-failed, with the actual observed value — not merely "no match".
-
-This is why explainability sits after Stages 3 and 5: an explanation is only
-useful if it can also say "suppressed by cooldown until 14:32" or "sequence
-matched 2 of 3 steps, expired at 14:05".
-
-**Done when.** Both firing and non-firing paths produce a structured, typed
-trace with `to_dict()`/`to_json()` exports, consistent with the existing typed
-result objects, and the text rendering above is one view over that structure
-rather than the primary output.
+**Read-only by construction.** Deciding suppression previously mutated episode
+state, so that decision was split into a pure function shared by the emission
+path and by explain. Nothing is registered, no watermark moves, and nothing is
+delivered, so explain is safe on a live engine. Tests assert the engine is
+byte-identical afterwards, including for sequence partial matches.
 
 ---
 

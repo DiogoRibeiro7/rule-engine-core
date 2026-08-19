@@ -240,7 +240,65 @@ Snapshots do not carry in-progress drains or staged reloads. A restore puts ever
 entity on the rules passed to `restore()`. Let a drain finish, or re-issue the
 reload after restoring.
 
-## 9. When To Use Which Surface
+## 9. Explain Why A Rule Did Or Did Not Fire
+
+`explain()` reports what every rule would do with an event, without changing
+anything: no state is registered or mutated, no watermark moves, and nothing is
+delivered. It is safe to call on a live engine.
+
+```python
+result = engine.explain(event)
+
+print(result.render())
+result.to_dict()            # same structure, for tooling
+result.emitting_rule_ids()  # ["temperature_spike"]
+```
+
+```text
+event: entity=facility-1 at 2024-01-01T12:02:00+00:00
+
+rule: temperature_spike  [window]
+    entity matches *                         PASS   observed=facility-1
+    sensor_type in sensor_a                  PASS   observed=sensor_a
+    events in the last 0:05:00               PASS   observed=3
+        includes this event
+    avg > 42                                 PASS   observed=43.13333333333333
+    not suppressed                           PASS
+  outcome: would_emit
+    would emit as firing
+```
+
+The non-firing case is the useful half. `first_failure()` returns the check that
+stopped the rule, with the value actually observed:
+
+```python
+failure = result.by_rule("reading_spike").first_failure()
+failure.label      # "value > 40"
+failure.observed   # 12.0
+```
+
+### Outcomes
+
+| Outcome | Meaning |
+| --- | --- |
+| `would_emit` | Every check passed |
+| `entity_not_matched` | The rule's entity filter excludes this entity |
+| `source_not_matched` | The event's sensor type is not one of the rule's sources |
+| `condition_not_met` | A condition operand failed; `first_failure()` names it |
+| `suppressed` | The rule would fire but its cooldown has not elapsed |
+| `waiting` | An absence timer is running but has not reached its deadline |
+| `timer_not_started` | An absence rule has never seen a reading |
+| `timer_reset` | This event is a reading, so the absence timer restarts |
+| `already_fired` | The absence or composite alert is already active |
+| `ignored` | Not the next expected step of a sequence |
+| `advanced` | A sequence moved forward but is not complete |
+| `cancelled` | A `without` event cancelled the sequence matches in flight |
+| `scheduled` | Scheduled rules run on their cron, not on events |
+
+The text rendering is one view over the structure, not the primary output.
+`to_dict()` and `to_json()` give the same information for downstream tooling.
+
+## 10. When To Use Which Surface
 
 - Use `build_engine_from_yaml(...)` for the smallest embedding surface.
 - Use `build_engine_from_files(...)` when files are the deployment artifact.

@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from math import ceil
 from statistics import mean, pstdev
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from .declarative import Action, DeclarativeRule
 from .models import (
@@ -17,9 +17,12 @@ from .models import (
     EngineConfig,
     EngineSnapshot,
     EvaluationResult,
+    ExplainCheck,
+    ExplainResult,
     LateEventMetrics,
     ReloadReport,
     ReplayDeliveryReport,
+    RuleExplanation,
     RuleMetadata,
     RuleReloadOutcome,
 )
@@ -350,6 +353,60 @@ def _render_template(template: str, variables: Dict[str, Any]) -> str:
         return str(value) if value is not None else match.group(0)
 
     return _TEMPLATE_RE.sub(replacer, template)
+
+
+_OPERATOR_SYMBOLS = {"eq": "==", "ne": "!=", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
+
+
+def _lifecycle_decision(
+    rule: CompiledRule, state: "RuleState", now: datetime
+) -> Tuple[Optional[str], Optional[timedelta]]:
+    """Decide the emission label without touching state.
+
+    Returns the label, or None when suppressed, alongside how long the
+    suppression still has to run. Kept pure so explain() can ask the same
+    question the emission path asks, without changing the answer.
+    """
+    if not rule.has_lifecycle or state.episode_started is None:
+        return "firing", None
+    gap = max(rule.cooldown or timedelta(0), rule.repeat_every or timedelta(0))
+    last_emit = state.last_emit or state.episode_started
+    if gap > timedelta(0) and now - last_emit < gap:
+        return None, gap - (now - last_emit)
+    return "repeat", None
+
+
+def _explain_operands(rule: CompiledRule, values: Dict[str, Any]) -> List[ExplainCheck]:
+    checks: List[ExplainCheck] = []
+    for operand in rule.operands:
+        if operand.const is not None:
+            checks.append(
+                ExplainCheck(label=f"const is {operand.const}", passed=bool(operand.const))
+            )
+            continue
+        symbol = _OPERATOR_SYMBOLS.get(operand.operator or "", operand.operator or "?")
+        label = f"{operand.metric} {symbol} {operand.value}"
+        observed = values.get(operand.metric or "")
+        if observed is None:
+            checks.append(
+                ExplainCheck(
+                    label=label,
+                    passed=False,
+                    observed=None,
+                    expected=operand.value,
+                    detail="no value available for this metric",
+                )
+            )
+            continue
+        checks.append(
+            ExplainCheck(
+                label=label,
+                passed=_compare(observed, operand.operator or "eq", operand.value),
+                observed=observed,
+                expected=operand.value,
+            )
+        )
+    return checks
 
 
 def _serialize_rule_state(state: "RuleState") -> Dict[str, Any]:
@@ -1267,6 +1324,268 @@ class CompiledEngine:
                         state.next_schedule_fire = _next_cron_fire(fire_time, rule.cron or "")
         return emitted
 
+    def explain(self, event: SensorEvent) -> ExplainResult:
+        """Explain what every rule would do with this event.
+
+        Read-only: no state is registered or mutated, no watermark moves, and
+        nothing is delivered. Safe to call on a live engine.
+        """
+        now = event.timestamp
+        states = self._entities.get(event.entity_id, {})
+        explanations: List[RuleExplanation] = []
+        for declared in self.rules:
+            rule = self._rule_for(event.entity_id, declared.rule_id)
+            state = states.get(rule.rule_id)
+            if state is None:
+                state = RuleState()
+            explanations.append(self._explain_rule(rule, state, event, now))
+        return ExplainResult(
+            entity_id=event.entity_id,
+            timestamp=now.isoformat(),
+            rules=explanations,
+        )
+
+    def _explain_rule(
+        self, rule: CompiledRule, state: RuleState, event: SensorEvent, now: datetime
+    ) -> RuleExplanation:
+        checks: List[ExplainCheck] = []
+
+        def finish(outcome: str, detail: str = "") -> RuleExplanation:
+            return RuleExplanation(
+                rule_id=rule.rule_id,
+                entity_id=event.entity_id,
+                trigger_type=rule.trigger_type,
+                outcome=outcome,
+                checks=checks,
+                detail=detail,
+            )
+
+        def lifecycle_outcome() -> RuleExplanation:
+            label, remaining = _lifecycle_decision(rule, state, now)
+            if label is None:
+                checks.append(
+                    ExplainCheck(
+                        label="not suppressed",
+                        passed=False,
+                        detail="suppressed for another " + str(remaining),
+                    )
+                )
+                return finish("suppressed", "cooldown has " + str(remaining) + " left to run")
+            checks.append(ExplainCheck(label="not suppressed", passed=True))
+            return finish("would_emit", "would emit as " + label)
+
+        applies = rule.applies_to_entity(event.entity_id)
+        checks.append(
+            ExplainCheck(
+                label="entity matches " + rule.entity_id_filter,
+                passed=applies,
+                observed=event.entity_id,
+            )
+        )
+        if not applies:
+            return finish("entity_not_matched")
+
+        if rule.trigger_type == "sequence":
+            return self._explain_sequence(rule, state, event, now, checks, finish)
+
+        source_match = event.sensor_type in rule.sensor_types
+        checks.append(
+            ExplainCheck(
+                label="sensor_type in " + ", ".join(sorted(rule.sensor_types)),
+                passed=source_match,
+                observed=event.sensor_type,
+            )
+        )
+
+        if rule.trigger_type == "event":
+            if not source_match:
+                return finish("source_not_matched")
+            values = {
+                "entity_id": event.entity_id,
+                "sensor_type": event.sensor_type,
+                "value": event.value,
+                "timestamp_ms": event.timestamp_ms,
+                "rule_id": rule.rule_id,
+            }
+            checks.extend(_explain_operands(rule, values))
+            if not _evaluate_operands(rule.condition_operator, rule.operands, values):
+                return finish("condition_not_met")
+            return lifecycle_outcome()
+
+        if rule.trigger_type == "absence":
+            sensor_type = rule.sensor_types[0]
+            last_seen = state.last_seen.get(sensor_type)
+            timeout = rule.timeout or timedelta(0)
+            if last_seen is None:
+                checks.append(
+                    ExplainCheck(
+                        label="source seen before",
+                        passed=False,
+                        detail="no reading recorded yet, so no timer is running",
+                    )
+                )
+                return finish("timer_not_started")
+            deadline = last_seen + timeout
+            checks.append(
+                ExplainCheck(
+                    label="silent for " + str(timeout),
+                    passed=now >= deadline,
+                    observed=str(now - last_seen),
+                    expected=str(timeout),
+                    detail="fires at " + deadline.isoformat(),
+                )
+            )
+            if source_match:
+                return finish(
+                    "timer_reset", "this event is a reading, so the absence timer restarts"
+                )
+            if now < deadline:
+                return finish("waiting", str(deadline - now) + " left before the timer fires")
+            if state.absence_fired:
+                return finish("already_fired", "the timer has already fired for this gap")
+            return lifecycle_outcome()
+
+        if rule.trigger_type == "composite":
+            for sensor_type, timeout in sorted(rule.source_timeouts.items()):
+                last_seen = state.last_seen.get(sensor_type)
+                checks.append(
+                    ExplainCheck(
+                        label=sensor_type + " silent for " + str(timeout),
+                        passed=state.source_absent.get(sensor_type, False),
+                        observed=str(now - last_seen) if last_seen else None,
+                        expected=str(timeout),
+                    )
+                )
+            active = self._composite_condition_active(rule, state)
+            checks.append(
+                ExplainCheck(
+                    label="sources combine under " + (rule.condition_operator or "AND"),
+                    passed=active,
+                )
+            )
+            if not active:
+                return finish("condition_not_met")
+            if state.composite_active:
+                return finish("already_fired", "this composite is already active")
+            return lifecycle_outcome()
+
+        if rule.trigger_type == "window":
+            duration = rule.duration or timedelta(0)
+            start = now - duration
+            events = [
+                buffered
+                for buffered in state.buffered_events
+                if start <= buffered.timestamp <= now
+                and buffered.sensor_type in rule.sensor_types
+            ]
+            if source_match:
+                events = sorted(events + [event], key=lambda item: item.timestamp)
+            window = EntityWindow(entity_id=event.entity_id, start=start, end=now, events=events)
+            values = self._window_values(rule, window)
+            checks.append(
+                ExplainCheck(
+                    label="events in the last " + str(duration),
+                    passed=bool(events),
+                    observed=len(events),
+                    detail="includes this event" if source_match else "this event is not a source",
+                )
+            )
+            checks.extend(_explain_operands(rule, values))
+            if not _evaluate_operands(rule.condition_operator, rule.operands, values):
+                return finish("condition_not_met")
+            return lifecycle_outcome()
+
+        if rule.trigger_type == "scheduled":
+            next_fire = state.next_schedule_fire
+            checks.append(
+                ExplainCheck(
+                    label="cron " + str(rule.cron) + " elapsed",
+                    passed=next_fire is not None and now >= next_fire,
+                    observed=now.isoformat(),
+                    expected=next_fire.isoformat() if next_fire else None,
+                )
+            )
+            return finish(
+                "scheduled", "scheduled rules are evaluated on their cron, not on events"
+            )
+
+        return finish("not_evaluated")
+
+    def _explain_sequence(
+        self,
+        rule: CompiledRule,
+        state: RuleState,
+        event: SensorEvent,
+        now: datetime,
+        checks: List[ExplainCheck],
+        finish: Callable[..., RuleExplanation],
+    ) -> RuleExplanation:
+        steps = rule.sequence_steps
+        within = rule.within or timedelta(0)
+        cutoff = now - within
+        live = [(started, step) for started, step in state.partial_matches if started >= cutoff]
+        expired = len(state.partial_matches) - len(live)
+
+        checks.append(
+            ExplainCheck(
+                label="pattern " + " then ".join(steps),
+                passed=True,
+                detail="bounded by " + str(within),
+            )
+        )
+        checks.append(
+            ExplainCheck(
+                label="partial matches in flight",
+                passed=bool(live),
+                observed=len(live),
+                detail=(str(expired) + " expired against the window") if expired else "",
+            )
+        )
+
+        if event.sensor_type == rule.without_sensor_type:
+            checks.append(
+                ExplainCheck(
+                    label="not a " + str(rule.without_sensor_type) + " event",
+                    passed=False,
+                    observed=event.sensor_type,
+                )
+            )
+            return finish("cancelled", "this event cancels every partial match in flight")
+
+        expected = sorted({steps[step] for _, step in live} | {steps[0]})
+        advances = event.sensor_type in expected
+        checks.append(
+            ExplainCheck(
+                label="advances one of " + ", ".join(expected),
+                passed=advances,
+                observed=event.sensor_type,
+            )
+        )
+        if not advances:
+            return finish("ignored", "not the next expected step, so partial matches are unchanged")
+
+        completing = [
+            started
+            for started, step in live
+            if steps[step] == event.sensor_type and step + 1 == len(steps)
+        ]
+        if not completing:
+            return finish("advanced", "the pattern moved forward but is not complete")
+
+        checks.append(ExplainCheck(label="pattern complete", passed=True))
+        label, remaining = _lifecycle_decision(rule, state, now)
+        if label is None:
+            checks.append(
+                ExplainCheck(
+                    label="not suppressed",
+                    passed=False,
+                    detail="suppressed for another " + str(remaining),
+                )
+            )
+            return finish("suppressed", "cooldown has " + str(remaining) + " left to run")
+        checks.append(ExplainCheck(label="not suppressed", passed=True))
+        return finish("would_emit", "would emit as " + label)
+
     def _advance_sequence(
         self, rule: CompiledRule, state: RuleState, event: SensorEvent
     ) -> List[EmittedAlert]:
@@ -1501,29 +1820,18 @@ class CompiledEngine:
         Rules with no emit block bypass episode tracking entirely and always
         emit, preserving the original behaviour.
         """
-        if not rule.has_lifecycle:
-            return "firing"
-
         state = self._entities[entity_id][rule.rule_id]
-        if state.episode_started is None:
+        label, _ = _lifecycle_decision(rule, state, now)
+        if label is None:
+            return None
+
+        if label == "firing" and rule.has_lifecycle and state.episode_started is None:
             state.episode_started = now
+        if rule.has_lifecycle:
             state.last_emit = now
             if rule.repeat_every is not None:
                 state.next_repeat_fire = now + rule.repeat_every
-            return "firing"
-
-        gap = max(
-            rule.cooldown or timedelta(0),
-            rule.repeat_every or timedelta(0),
-        )
-        last_emit = state.last_emit or state.episode_started
-        if gap > timedelta(0) and now - last_emit < gap:
-            return None
-
-        state.last_emit = now
-        if rule.repeat_every is not None:
-            state.next_repeat_fire = now + rule.repeat_every
-        return "repeat"
+        return label
 
     def _resolve_episode(
         self, rule: CompiledRule, entity_id: str, now: datetime

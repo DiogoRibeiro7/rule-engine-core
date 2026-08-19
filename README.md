@@ -234,6 +234,21 @@ alert episode until it resolves. Passing `activate_at` stages the swap until the
 watermark reaches that instant. The returned report says what happened to each
 rule.
 
+### Explainability
+
+Declarative logic is hard to debug because the logic is data. `explain()` reports
+what each rule would do with an event, and why:
+
+```python
+result = engine.explain(event)
+print(result.render())
+failure = result.by_rule("reading_spike").first_failure()   # the check that stopped it
+```
+
+It is read-only — no state is registered or mutated and no watermark moves — so
+it is safe on a live engine. For a rule that does not fire, `first_failure()`
+names the predicate that stopped it together with the value actually observed.
+
 ## CLI
 
 ```bash

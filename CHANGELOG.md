@@ -43,6 +43,13 @@ Suggested `Upgrade Notes` format:
 - `sequence_started`, `sequence_duration`, and `matched_steps` template
   variables on a completing sequence alert.
 - A `repeated_failure_then_success` example rule and event fixture.
+- `CompiledEngine.explain(event)` returning a typed `ExplainResult` describing
+  what every rule would do with an event and why, including the predicate that
+  stopped a rule that would not fire and the value actually observed. It is
+  read-only: nothing is registered or mutated, no watermark moves, and nothing
+  is delivered.
+- `ExplainResult.render()` for a text view over the same structure, plus
+  `to_dict()`/`to_json()` for tooling.
 
 ### Upgrade Notes
 

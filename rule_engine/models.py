@@ -115,6 +115,106 @@ class EvaluationResult:
         return json.dumps(self.to_dict(), indent=2)
 
 
+@dataclass
+class ExplainCheck:
+    """One predicate evaluated while explaining a rule."""
+
+    label: str
+    passed: bool
+    observed: Any = None
+    expected: Any = None
+    detail: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "label": self.label,
+            "passed": self.passed,
+            "observed": self.observed,
+            "expected": self.expected,
+            "detail": self.detail,
+        }
+
+
+@dataclass
+class RuleExplanation:
+    """Why one rule would or would not emit for a given event."""
+
+    rule_id: str
+    entity_id: str
+    trigger_type: str
+    outcome: str
+    checks: List[ExplainCheck] = field(default_factory=list)
+    detail: str = ""
+
+    @property
+    def would_emit(self) -> bool:
+        return self.outcome == "would_emit"
+
+    def first_failure(self) -> Optional[ExplainCheck]:
+        """The predicate that stopped this rule, or None if nothing failed."""
+        for check in self.checks:
+            if not check.passed:
+                return check
+        return None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "rule_id": self.rule_id,
+            "entity_id": self.entity_id,
+            "trigger_type": self.trigger_type,
+            "outcome": self.outcome,
+            "detail": self.detail,
+            "checks": [check.to_dict() for check in self.checks],
+        }
+
+
+@dataclass
+class ExplainResult:
+    """Explanations for every rule that was considered for one event."""
+
+    entity_id: str
+    timestamp: str
+    rules: List[RuleExplanation] = field(default_factory=list)
+
+    def by_rule(self, rule_id: str) -> Optional[RuleExplanation]:
+        for explanation in self.rules:
+            if explanation.rule_id == rule_id:
+                return explanation
+        return None
+
+    def emitting_rule_ids(self) -> List[str]:
+        return [entry.rule_id for entry in self.rules if entry.would_emit]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "entity_id": self.entity_id,
+            "timestamp": self.timestamp,
+            "rules": [entry.to_dict() for entry in self.rules],
+        }
+
+    def to_json(self, indent: Optional[int] = None) -> str:
+        return json.dumps(self.to_dict(), indent=indent)
+
+    def render(self) -> str:
+        """Human-readable view over the same structure."""
+        lines: List[str] = [f"event: entity={self.entity_id} at {self.timestamp}"]
+        for entry in self.rules:
+            lines.append("")
+            lines.append(f"rule: {entry.rule_id}  [{entry.trigger_type}]")
+            for check in entry.checks:
+                mark = "PASS" if check.passed else "FAIL"
+                line = f"    {check.label:<40} {mark}"
+                if check.observed is not None:
+                    line = f"{line}   observed={check.observed}"
+                lines.append(line)
+                if check.detail:
+                    lines.append(f"        {check.detail}")
+            lines.append(f"  outcome: {entry.outcome}")
+            if entry.detail:
+                lines.append(f"    {entry.detail}")
+        return chr(10).join(lines)
+
+
 RELOAD_POLICIES = ("reset", "preserve", "drain")
 
 
