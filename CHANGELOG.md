@@ -29,7 +29,9 @@ Suggested `Upgrade Notes` format:
   Existing configs remain valid.
 ```
 
-## Unreleased
+## 0.3.0 - 2026-08-19
+
+Alert lifecycle and rule lifecycle.
 
 ### Added
 

@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: If you use this software, please cite it using these metadata.
 title: "Rule Engine Core: a declarative complex event processing runtime with deterministic replay and at-least-once delivery"
 type: software
-version: 0.2.0
+version: 0.3.0
 license: MIT
 repository-code: "https://github.com/DiogoRibeiro7/rule-engine-core"
 url: "https://github.com/DiogoRibeiro7/rule-engine-core"
@@ -38,7 +38,7 @@ keywords:
   - dead-letter queue
   - observability
   - Python
-date-released: 2026-08-18
+date-released: 2026-08-19
 # Concept DOI: always resolves to the most recent archived release.
 doi: 10.5281/zenodo.22001698
 identifiers:
